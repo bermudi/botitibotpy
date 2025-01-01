@@ -1,20 +1,19 @@
-
 ## Development Plan
 
 ### Phase 1: Basic Infrastructure & Social Media Integration
 - [x] Project structure setup
 - [x] Configuration management
-- [ ] Basic Bluesky integration
+- [x] Basic Bluesky integration
   - [x] Authentication
   - [x] Basic posting
-  - [ ] Timeline fetching
-  - [ ] Comment handling
-- [ ] Basic Twitter integration
+  - [x] Timeline fetching
+  - [x] Comment handling
+- [x] Basic Twitter integration
   - [x] Client setup
-  - [ ] Authentication
-  - [ ] Basic posting
-  - [ ] Timeline fetching
-  - [ ] Comment handling
+  - [x] Authentication
+  - [x] Basic posting
+  - [x] Timeline fetching
+  - [x] Comment handling
 
 ### Phase 2: Content Generation
 - [ ] LlamaIndex integration
