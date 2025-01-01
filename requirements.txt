@@ -1,9 +1,10 @@
-llama-index
-python-dotenv
-atproto
-twitter-openapi-python
-beautifulsoup4
-feedparser
-sqlalchemy
-schedule
-websockets 
+python-dotenv>=1.0.0
+atproto>=0.0.33
+twitter-openapi-python>=0.0.19
+tweepy-authlib>=0.0.2
+
+# Content Generation
+llama-index>=0.8.4
+openai>=0.27.8
+numpy>=1.24.3
+pandas>=2.0.3 
