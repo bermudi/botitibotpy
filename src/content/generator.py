@@ -16,7 +16,8 @@ class ContentGenerator:
         llm_predictor = LLMPredictor(
             llm=OpenAI(
                 temperature=0.7,
-                model="gpt-3.5-turbo",
+                model=Config.OPENAI_API_MODEL,
+                api_base=Config.OPENAI_API_BASE,
                 api_key=Config.OPENAI_API_KEY
             )
         )
