@@ -51,14 +51,19 @@ class ContentGenerator:
                 raise ValueError("No content source loaded. Call load_content_source first.")
             
             complete_prompt = self._build_generation_prompt(prompt, max_length, tone, style)
+            print(f"Complete prompt: {complete_prompt}")  # Debug logging
+            
             query_engine = self.index.as_query_engine()
+            print(f"Query engine created")  # Debug logging
             
             max_retries = 3
             for attempt in range(max_retries):
                 try:
+                    print(f"Attempting query, try {attempt + 1}")  # Debug logging
                     response = query_engine.query(complete_prompt)
                     return str(response)
                 except Exception as e:
+                    print(f"Error details: {str(e)}")  # More detailed error logging
                     if attempt == max_retries - 1:
                         print(f"Final attempt failed: {str(e)}")
                         return None
@@ -69,6 +74,16 @@ class ContentGenerator:
             print(f"Error generating post: {str(e)}")
             return None
             
+    def direct_prompt(self, prompt: str) -> Optional[str]:
+        """Send a prompt directly to the LLM without using RAG or vector database"""
+        try:
+            # Using the OpenAI completion API directly through our LLM instance
+            response = self.llm.complete(prompt)
+            return response.text
+        except Exception as e:
+            print(f"Error in direct prompt: {str(e)}")
+            return None
+
     def _build_generation_prompt(self,
                                base_prompt: str,
                                max_length: Optional[int] = None,
