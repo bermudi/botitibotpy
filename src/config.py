@@ -10,6 +10,9 @@ class Config:
     OPENAI_API_BASE = os.getenv('OPENAI_API_BASE')
     OPENAI_API_MODEL = os.getenv('OPENAI_API_MODEL')
     
+    # Google API Configuration
+    GOOGLE_API_KEY = os.getenv('GOOGLE_API_KEY')
+    
     # Twitter credentials
     TWITTER_USERNAME = os.getenv('TWITTER_USERNAME')
     TWITTER_PASSWORD = os.getenv('TWITTER_PASSWORD')
