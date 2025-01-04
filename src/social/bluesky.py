@@ -1,6 +1,7 @@
 from atproto import Client, client_utils
 from typing import Optional, Any
 from ..config import Config
+from atproto_client.models.app.bsky.feed.get_author_feed import Params as AuthorFeedParams
 
 class BlueskyClient:
     def __init__(self):
@@ -79,4 +80,18 @@ class BlueskyClient:
             return self.client.send_post(text=text, reply_to=uri)
         except Exception as e:
             print(f"Error replying to post: {e}")
+            return None
+            
+    def get_author_feed(self, author: Optional[str] = None, limit: int = 20) -> Optional[Any]:
+        """Fetch an author's feed, defaulting to the current user if no author is specified"""
+        if author is None:
+            if self.profile is None:
+                raise ValueError("User not authenticated and no author specified.")
+            author = self.profile.did
+
+        try:
+            params = AuthorFeedParams(actor=author, limit=limit)
+            return self.client.get_author_feed(params=params)
+        except Exception as e:
+            print(f"Error fetching author feed for {author}: {e}")
             return None 

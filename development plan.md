@@ -8,12 +8,18 @@
   - [x] Basic posting
   - [x] Timeline fetching
   - [x] Comment handling
+  - [X] Author Feed Fetching
+  - [x] Like Post
+  - [x] Reply to Post
 - [x] Basic Twitter integration
   - [x] Client setup
   - [x] Authentication
   - [x] Basic posting
   - [x] Timeline fetching
   - [x] Comment handling
+  - [X] Author Feed Fetching
+  - [x] Like Tweet
+  - [x] Reply to Tweet
 
 ### Phase 2: Content Generation
 - [x] LlamaIndex integration

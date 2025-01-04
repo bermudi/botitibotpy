@@ -97,3 +97,24 @@ class TwitterClient:
         except Exception as e:
             print(f"Error replying to tweet: {e}")
             return False 
+
+    def get_author_feed(self, screen_name: Optional[str] = None) -> Optional[Any]:
+        """Fetch tweets from a specific author. If no screen_name is provided, fetches tweets from the authenticated user."""
+        try:
+            user_api = self.client.get_user_api()
+            
+            # If no screen_name provided, get the authenticated user's screen name
+            if screen_name is None:
+                user_info = user_api.get_user_by_screen_name(Config.TWITTER_USERNAME)
+                screen_name = user_info.data.user.legacy.screen_name
+            
+            # Get user info to get the user ID
+            user_info = user_api.get_user_by_screen_name(screen_name)
+            user_id = user_info.data.user.rest_id
+            
+            # Get user tweets using the tweet API
+            tweet_api = self.client.get_tweet_api()
+            return tweet_api.get_user_tweets(user_id)
+        except Exception as e:
+            print(f"Error fetching author feed: {e}")
+            return None 
