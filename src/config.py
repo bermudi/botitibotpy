@@ -10,6 +10,21 @@ class Config:
     OPENAI_API_BASE = os.getenv('OPENAI_API_BASE')
     OPENAI_API_MODEL = os.getenv('OPENAI_API_MODEL')
     
+    @classmethod
+    def validate(cls) -> None:
+        """Validate required environment variables are set"""
+        required_vars = [
+            'OPENAI_API_KEY',
+            # 'TWITTER_USERNAME',
+            # 'TWITTER_PASSWORD',
+            # 'BLUESKY_IDENTIFIER',
+            # 'BLUESKY_PASSWORD'
+        ]
+        
+        missing = [var for var in required_vars if not getattr(cls, var)]
+        if missing:
+            raise ValueError(f"Missing required environment variables: {', '.join(missing)}")
+    
     # Google API Configuration
     GOOGLE_API_KEY = os.getenv('GOOGLE_API_KEY')
     
