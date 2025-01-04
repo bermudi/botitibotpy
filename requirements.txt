@@ -1,16 +1,21 @@
-atproto==0.0.33
-twitter-openapi-python==0.0.29
-tweepy-authlib==1.5.6
-sqlalchemy==2.0.23
-alembic==1.12.1
-httpx>=0.27.0
-python-dotenv>=1.0.0
+# Core Dependencies
+python-dotenv==1.0.1
 
-# Content Generation
-llama-index>=0.8.4
-openai>=0.27.8
-numpy>=1.24.3
-pandas>=2.0.3
-llama-index-embeddings-gemini>=0.3.0
-google-generativeai>=0.3.0
-chromadb>=0.6.1
+# Social Media APIs
+atproto==0.0.56
+twitter-openapi-python==0.0.29
+
+# Database
+sqlalchemy==2.0.36
+alembic==1.14.0
+
+# Content Generation & AI
+llama-index==0.12.9
+llama-index-embeddings-gemini==0.3.0
+google-generativeai==0.5.4
+chromadb==0.6.1
+
+# Web & Parsing
+requests==2.32.3
+beautifulsoup4==4.12.3
+feedparser==6.0.11
