@@ -2,8 +2,12 @@ import time
 import logging
 import os
 import hashlib
-from typing import Optional, Dict, Any, List
-from llama_index.core import VectorStoreIndex, SimpleDirectoryReader, Settings, StorageContext
+import requests
+import feedparser
+from bs4 import BeautifulSoup
+from datetime import datetime
+from typing import Optional, Dict, Any, List, Tuple
+from llama_index.core import VectorStoreIndex, SimpleDirectoryReader, Settings, StorageContext, Document
 from llama_index.vector_stores.chroma import ChromaVectorStore
 from llama_index.llms.openai import OpenAI
 from llama_index.embeddings.gemini import GeminiEmbedding
@@ -224,3 +228,215 @@ class ContentGenerator:
         final_prompt = " ".join(prompt_parts)
         logger.debug(f"Generated prompt: {final_prompt}")
         return final_prompt
+
+    def load_webpage(self, url: str) -> Optional[Document]:
+        """Load and parse content from a web page.
+        
+        Args:
+            url: The URL of the web page to parse
+            
+        Returns:
+            Optional[Document]: A Document object containing the parsed content and metadata,
+                              or None if parsing fails
+        """
+        try:
+            logger.info(f"Fetching content from URL: {url}")
+            response = requests.get(url, timeout=10)
+            response.raise_for_status()
+            
+            soup = BeautifulSoup(response.text, 'html.parser')
+            
+            # Extract main content (prioritize article or main content areas)
+            content_areas = soup.find_all(['article', 'main']) or [soup.find('body')]
+            content = ""
+            
+            for area in content_areas:
+                if area:
+                    # Remove script and style elements
+                    for element in area(['script', 'style']):
+                        element.decompose()
+                    content += area.get_text(separator='\n', strip=True)
+            
+            # Extract metadata
+            metadata = {
+                'url': url,
+                'title': soup.title.string if soup.title else '',
+                'source_type': 'webpage',
+                'timestamp': datetime.now().isoformat(),
+            }
+            
+            # Create document
+            doc = Document(
+                text=content,
+                metadata=metadata
+            )
+            
+            logger.info(f"Successfully parsed webpage: {metadata['title']}")
+            return doc
+            
+        except Exception as e:
+            logger.error(f"Error parsing webpage {url}: {str(e)}", exc_info=True)
+            return None
+            
+    def load_webpage_batch(self, urls: List[str]) -> List[Document]:
+        """Load and parse content from multiple web pages.
+        
+        Args:
+            urls: List of URLs to parse
+            
+        Returns:
+            List[Document]: List of successfully parsed Document objects
+        """
+        documents = []
+        for url in urls:
+            doc = self.load_webpage(url)
+            if doc:
+                documents.append(doc)
+        return documents
+
+    def add_webpage_to_index(self, url: str) -> bool:
+        """Parse a webpage and add its content to the index."""
+        try:
+            doc = self.load_webpage(url)
+            if not doc:
+                return False
+                
+            doc_hash = self._calculate_document_hash(doc.text)
+            doc_id = self._get_document_id(url, doc.text)
+            
+            # Check if document is new or modified
+            if doc_id not in self.document_hashes or self.document_hashes[doc_id] != doc_hash:
+                logger.info(f"Adding new webpage to index: {url}")
+                
+                if self.index is None:
+                    self.index = VectorStoreIndex.from_documents(
+                        [doc],
+                        storage_context=self.storage_context,
+                        embed_model=self.embed_model
+                    )
+                else:
+                    self.index.insert(doc, id=doc_id)
+                    
+                self.document_hashes[doc_id] = doc_hash
+                return True
+            
+            logger.info(f"Webpage already indexed and unchanged: {url}")
+            return True
+            
+        except Exception as e:
+            logger.error(f"Error adding webpage to index: {str(e)}", exc_info=True)
+            return False
+
+    def parse_rss_feed(self, feed_url: str) -> Optional[List[Document]]:
+        """Parse an RSS feed and convert entries to documents.
+        
+        Args:
+            feed_url: URL of the RSS feed
+            
+        Returns:
+            Optional[List[Document]]: List of Document objects from feed entries,
+                                    or None if parsing fails
+        """
+        try:
+            logger.info(f"Fetching RSS feed: {feed_url}")
+            feed = feedparser.parse(feed_url)
+            
+            if feed.bozo:  # feedparser sets this flag for malformed feeds
+                logger.error(f"Malformed RSS feed at {feed_url}: {feed.bozo_exception}")
+                return None
+                
+            documents = []
+            for entry in feed.entries:
+                # Extract content (prefer full content over summary)
+                content = ''
+                if hasattr(entry, 'content'):
+                    content = entry.content[0].value
+                elif hasattr(entry, 'summary'):
+                    content = entry.summary
+                elif hasattr(entry, 'description'):
+                    content = entry.description
+                    
+                # Clean content (remove HTML if present)
+                if content:
+                    soup = BeautifulSoup(content, 'html.parser')
+                    content = soup.get_text(separator='\n', strip=True)
+                
+                # Extract publication date
+                pub_date = None
+                if hasattr(entry, 'published_parsed'):
+                    pub_date = datetime(*entry.published_parsed[:6]).isoformat()
+                elif hasattr(entry, 'updated_parsed'):
+                    pub_date = datetime(*entry.updated_parsed[:6]).isoformat()
+                
+                # Create metadata
+                metadata = {
+                    'title': entry.get('title', ''),
+                    'link': entry.get('link', ''),
+                    'author': entry.get('author', ''),
+                    'published_date': pub_date,
+                    'feed_url': feed_url,
+                    'source_type': 'rss',
+                    'feed_title': feed.feed.get('title', ''),
+                }
+                
+                # Create document
+                doc = Document(
+                    text=content,
+                    metadata=metadata
+                )
+                documents.append(doc)
+            
+            logger.info(f"Successfully parsed {len(documents)} entries from RSS feed: {feed.feed.get('title', feed_url)}")
+            return documents
+            
+        except Exception as e:
+            logger.error(f"Error parsing RSS feed {feed_url}: {str(e)}", exc_info=True)
+            return None
+            
+    def monitor_rss_feed(self, feed_url: str) -> Tuple[int, int]:
+        """Monitor an RSS feed and add new entries to the index.
+        
+        Args:
+            feed_url: URL of the RSS feed to monitor
+            
+        Returns:
+            Tuple[int, int]: (number of new entries, number of failed entries)
+        """
+        try:
+            documents = self.parse_rss_feed(feed_url)
+            if not documents:
+                return (0, 0)
+                
+            new_entries = 0
+            failed_entries = 0
+            
+            for doc in documents:
+                try:
+                    doc_hash = self._calculate_document_hash(doc.text)
+                    doc_id = self._get_document_id(doc.metadata['link'], doc.text)
+                    
+                    # Check if entry is new or modified
+                    if doc_id not in self.document_hashes or self.document_hashes[doc_id] != doc_hash:
+                        logger.info(f"Adding new RSS entry to index: {doc.metadata['title']}")
+                        
+                        if self.index is None:
+                            self.index = VectorStoreIndex.from_documents(
+                                [doc],
+                                storage_context=self.storage_context,
+                                embed_model=self.embed_model
+                            )
+                        else:
+                            self.index.insert(doc, id=doc_id)
+                            
+                        self.document_hashes[doc_id] = doc_hash
+                        new_entries += 1
+                        
+                except Exception as e:
+                    logger.error(f"Error processing RSS entry {doc.metadata.get('title', 'unknown')}: {str(e)}")
+                    failed_entries += 1
+                    
+            return (new_entries, failed_entries)
+            
+        except Exception as e:
+            logger.error(f"Error monitoring RSS feed {feed_url}: {str(e)}", exc_info=True)
+            return (0, 0)
