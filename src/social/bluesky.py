@@ -9,6 +9,16 @@ class BlueskyClient:
         self.profile = None
         self.setup_auth()
     
+    def __enter__(self):
+        return self
+    
+    def __exit__(self, exc_type, exc_val, exc_tb):
+        """Clean up resources when exiting context"""
+        if hasattr(self.client, 'close'):
+            self.client.close()
+        elif hasattr(self.client, '_session') and hasattr(self.client._session, 'close'):
+            self.client._session.close()
+    
     def setup_auth(self) -> bool:
         """Authenticate with Bluesky using credentials from config"""
         try:
