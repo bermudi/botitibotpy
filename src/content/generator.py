@@ -10,13 +10,22 @@ from llama_index.embeddings.gemini import GeminiEmbedding
 import chromadb
 from ..config import Config
 
+logger = logging.getLogger(__name__)
+
 class ContentGenerator:
-    def __init__(self):
-        """Initialize the content generator with LlamaIndex and ChromaDB components"""
-        # Configure logging
-        logging.basicConfig(level=logging.DEBUG)
+    def __init__(self, log_level: int = logging.INFO):
+        """Initialize the content generator with LlamaIndex and ChromaDB components
+        
+        Args:
+            log_level: The logging level to use (default: logging.INFO)
+        """
+        # Configure class logger
+        logger.setLevel(log_level)
+        
+        logger.debug("Initializing ContentGenerator")
         
         # Initialize Gemini embedding model
+        logger.debug("Setting up Gemini embedding model")
         self.embed_model = GeminiEmbedding(
             model_name="models/embedding-001",
             api_key=Config.GOOGLE_API_KEY
@@ -24,6 +33,7 @@ class ContentGenerator:
         Settings.embed_model = self.embed_model
         
         # Configure LlamaIndex LLM settings
+        logger.debug("Configuring LlamaIndex LLM settings")
         Settings.llm = OpenAI(
             temperature=0.7,
             model=Config.OPENAI_API_MODEL,
@@ -36,17 +46,20 @@ class ContentGenerator:
         self.persist_dir = "chroma_db"
         
         # Initialize ChromaDB client
+        logger.debug(f"Initializing ChromaDB client with persist_dir: {self.persist_dir}")
         self.chroma_client = chromadb.PersistentClient(path=self.persist_dir)
         self.collection_name = "content_collection"
         self.chroma_collection = self.chroma_client.get_or_create_collection(self.collection_name)
         
         # Initialize vector store
+        logger.debug("Setting up vector store and storage context")
         self.vector_store = ChromaVectorStore(chroma_collection=self.chroma_collection)
         self.storage_context = StorageContext.from_defaults(vector_store=self.vector_store)
         
         # Track document hashes
         self.document_hashes = {}
-    
+        logger.info("ContentGenerator initialized successfully")
+
     def _calculate_document_hash(self, content: str) -> str:
         """Calculate a hash for document content."""
         return hashlib.sha256(content.encode()).hexdigest()
@@ -59,28 +72,30 @@ class ContentGenerator:
         """Load the vector store index from ChromaDB."""
         try:
             if self.chroma_collection.count() > 0:
+                logger.info("Loading existing index from ChromaDB")
                 self.index = VectorStoreIndex.from_vector_store(
                     self.vector_store,
                     embed_model=self.embed_model
                 )
-                print(f"Index loaded from {self.persist_dir}")
+                logger.info(f"Index successfully loaded from {self.persist_dir}")
                 return True
+            logger.info("No existing index found in ChromaDB")
             return False
         except Exception as e:
-            print(f"Error loading index: {str(e)}")
+            logger.error(f"Failed to load index: {str(e)}", exc_info=True)
             return False
 
     def load_content_source(self, directory_path: str) -> bool:
         """Load content from a directory, updating only if documents have changed."""
         try:
-            print(f"Checking content in: {os.path.abspath(directory_path)}")
+            logger.info(f"Loading content from directory: {os.path.abspath(directory_path)}")
             if not os.path.exists(directory_path):
-                print(f"Directory does not exist: {directory_path}")
+                logger.error(f"Directory does not exist: {directory_path}")
                 return False
 
             # Load documents
             documents = SimpleDirectoryReader(directory_path).load_data()
-            print(f"Found {len(documents)} documents")
+            logger.info(f"Found {len(documents)} documents in directory")
 
             # Track new or modified documents
             new_docs = []
@@ -93,6 +108,7 @@ class ContentGenerator:
                 
                 # Check if document is new or modified
                 if doc_id not in self.document_hashes or self.document_hashes[doc_id] != doc_hash:
+                    logger.debug(f"New or modified document found: {doc.metadata.get('file_path', 'unknown')}")
                     new_docs.append(doc)
                     new_ids.append(doc_id)
                     new_metadata.append({
@@ -102,96 +118,89 @@ class ContentGenerator:
                     self.document_hashes[doc_id] = doc_hash
 
             if new_docs:
-                print(f"Adding/updating {len(new_docs)} documents")
+                logger.info(f"Adding/updating {len(new_docs)} documents to index")
                 # Create or update index with new documents
                 if self.index is None:
+                    logger.debug("Creating new index")
                     self.index = VectorStoreIndex.from_documents(
                         new_docs,
                         storage_context=self.storage_context,
                         embed_model=self.embed_model
                     )
                 else:
+                    logger.debug("Updating existing index")
                     for doc, doc_id in zip(new_docs, new_ids):
                         self.index.insert(doc, id=doc_id)
                 
-                print("Documents successfully indexed")
+                logger.info("Documents successfully indexed")
             else:
-                print("No new or modified documents to index")
+                logger.info("No new or modified documents to index")
 
             return True
 
         except Exception as e:
-            print(f"Error loading content source: {str(e)}")
-            print(f"Error type: {type(e)}")
+            logger.error(f"Error loading content source: {str(e)}", exc_info=True)
             return False
 
     def save_index(self):
         """ChromaDB automatically persists changes, this method is kept for compatibility."""
         if self.index:
-            print(f"Index is automatically persisted in {self.persist_dir}")
+            logger.info(f"Index is automatically persisted in {self.persist_dir}")
         else:
-            print("No index to save.")
+            logger.warning("No index to save")
             
     def generate_post(self, prompt: str, max_length: Optional[int] = None,
-                 tone: Optional[str] = None, style: Optional[str] = None) -> Optional[str]:
+                     tone: Optional[str] = None, style: Optional[str] = None) -> Optional[str]:
         try:
             if not self.index:
+                logger.error("No content source loaded")
                 raise ValueError("No content source loaded. Call load_content_source first.")
             
             complete_prompt = self._build_generation_prompt(prompt, max_length, tone, style)
-            print(f"Complete prompt: {complete_prompt}")  # Debug logging
+            logger.debug(f"Generated complete prompt: {complete_prompt}")
             
             # Debug index state
-            print(f"Index stats: {self.index.summary}")
+            logger.debug(f"Index stats: {self.index.summary}")
             
             try:
                 query_engine = self.index.as_query_engine()
-                print(f"Query engine created successfully")  # Debug logging
-                print(f"Query engine type: {type(query_engine)}")
+                logger.debug("Query engine created successfully")
             except Exception as qe:
-                print(f"Failed to create query engine: {str(qe)}")
-                print(f"Query engine error type: {type(qe)}")
+                logger.error(f"Failed to create query engine: {str(qe)}", exc_info=True)
                 raise
             
             max_retries = 3
             for attempt in range(max_retries):
                 try:
-                    print(f"Attempting query, try {attempt + 1}")  # Debug logging
-                    print(f"LLM being used: {self.llm.__class__.__name__}")
-                    
-                    # Debug the query parameters
-                    print(f"Query parameters: prompt_len={len(complete_prompt)}")
+                    logger.debug(f"Attempting query (attempt {attempt + 1}/{max_retries})")
+                    logger.debug(f"Using LLM: {self.llm.__class__.__name__}")
                     
                     response = query_engine.query(complete_prompt)
-                    print(f"Query successful, response type: {type(response)}")
+                    logger.info("Query completed successfully")
+                    logger.debug(f"Response type: {type(response)}")
                     return str(response)
                 except Exception as e:
-                    print(f"Error in query attempt {attempt + 1}:")
-                    print(f"Error type: {type(e)}")
-                    print(f"Error message: {str(e)}")
-                    print(f"Error details: {e.__dict__}")  # Print all error attributes
+                    logger.warning(f"Query attempt {attempt + 1} failed: {str(e)}")
                     
                     if attempt == max_retries - 1:
-                        print(f"Final attempt failed")
-                        raise  # Re-raise to be caught by outer try-except
-                    print(f"Attempt {attempt + 1} failed, retrying...")
+                        logger.error("All query attempts failed", exc_info=True)
+                        raise
+                    logger.info(f"Retrying query after attempt {attempt + 1}")
                     time.sleep(1)
                                     
         except Exception as e:
-            print(f"Error in generate_post:")
-            print(f"Error type: {type(e)}")
-            print(f"Error message: {str(e)}")
-            print(f"Error details: {e.__dict__}")  # Print all error attributes
+            logger.error(f"Error in generate_post: {str(e)}", exc_info=True)
             return None
             
     def direct_prompt(self, prompt: str) -> Optional[str]:
         """Send a prompt directly to the LLM without using RAG or vector database"""
         try:
-            # Using the OpenAI completion API directly through our LLM instance
+            logger.debug("Sending direct prompt to LLM")
             response = self.llm.complete(prompt)
+            logger.info("Direct prompt completed successfully")
             return response.text
         except Exception as e:
-            print(f"Error in direct prompt: {str(e)}")
+            logger.error(f"Error in direct prompt: {str(e)}", exc_info=True)
             return None
 
     def _build_generation_prompt(self,
@@ -200,6 +209,7 @@ class ContentGenerator:
                                tone: Optional[str] = None,
                                style: Optional[str] = None) -> str:
         """Build a complete prompt incorporating all parameters"""
+        logger.debug("Building generation prompt")
         prompt_parts = [base_prompt]
         
         if max_length:
@@ -211,4 +221,6 @@ class ContentGenerator:
         if style:
             prompt_parts.append(f"Write in a {style} style.")
             
-        return " ".join(prompt_parts)
+        final_prompt = " ".join(prompt_parts)
+        logger.debug(f"Generated prompt: {final_prompt}")
+        return final_prompt

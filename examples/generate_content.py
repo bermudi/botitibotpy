@@ -1,8 +1,9 @@
+import logging
 from src.content.generator import ContentGenerator
 
 def main():
     # Initialize the content generator
-    generator = ContentGenerator()
+    generator = ContentGenerator(log_level=logging.DEBUG)
     
     # Load content from a source directory
     # This directory should contain text files, markdown, etc. that will be used
