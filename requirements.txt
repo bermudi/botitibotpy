@@ -12,6 +12,8 @@ alembic==1.14.0
 
 # Content Generation & AI
 llama-index==0.12.9
+llama-index-llms-openai==0.3.12
+llama-index-vector-stores-chroma==0.4.1
 llama-index-embeddings-gemini==0.3.0
 google-generativeai==0.5.4
 chromadb==0.6.1
