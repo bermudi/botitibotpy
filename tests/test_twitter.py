@@ -6,7 +6,7 @@ import json
 
 @patch('time.sleep')  # Class-level patch for sleep to speed up all tests
 class TestTwitterClient(unittest.TestCase):
-    @patch('tweepy_authlib.CookieSessionUserHandler')
+    @patch('src.social.twitter.CookieSessionUserHandler')
     def setUp(self, mock_cookie_handler):
         """Setup test environment"""
         # Create mock cookies with required fields
@@ -19,6 +19,11 @@ class TestTwitterClient(unittest.TestCase):
         mock_handler.get_cookies.return_value.get_dict.return_value = mock_cookies_dict
         mock_cookie_handler.return_value = mock_handler
 
+        # Mock the retry decorator to just call the function once
+        patcher = patch('src.social.twitter.retry_on_failure', lambda *args, **kwargs: lambda f: f)
+        self.addCleanup(patcher.stop)
+        patcher.start()
+
         # Mock the Config
         with patch('src.social.twitter.Config') as mock_config:
             mock_config.TWITTER_USERNAME = "test_user"
@@ -29,6 +34,10 @@ class TestTwitterClient(unittest.TestCase):
                 mock_client.get_client_from_cookies.return_value = mock_client
                 self.twitter_client = TwitterClient()
                 self.twitter_client.client = mock_client
+
+        # Store the mock handler for use in tests
+        self.mock_cookie_handler = mock_cookie_handler
+        self.mock_handler = mock_handler
 
     def _setup_mock_client(self):
         """Helper method to set up a mock client with required attributes"""
@@ -105,7 +114,7 @@ class TestTwitterClient(unittest.TestCase):
             call(tweet_text="Test content")
         ])
 
-    @patch('tweepy_authlib.CookieSessionUserHandler')
+    @patch('src.social.twitter.CookieSessionUserHandler')
     def test_create_new_cookies(self, mock_cookie_handler, mock_sleep):
         """Test creating new cookies"""
         # Arrange
@@ -140,6 +149,7 @@ class TestTwitterClient(unittest.TestCase):
                 )
                 mock_handler.get_cookies.assert_called_once()
                 mock_open_obj.assert_called_once_with(Path("test_path"), "w")
+                self.assertTrue(mock_open_obj().write.called)
 
     def test_create_new_cookies_missing_credentials(self, mock_sleep):
         """Test creating new cookies with missing credentials"""
@@ -152,7 +162,7 @@ class TestTwitterClient(unittest.TestCase):
             
             self.assertIn("Twitter credentials not found", str(context.exception))
 
-    @patch('tweepy_authlib.CookieSessionUserHandler')
+    @patch('src.social.twitter.CookieSessionUserHandler')
     def test_create_new_cookies_auth_failure(self, mock_cookie_handler, mock_sleep):
         """Test creating new cookies with authentication failure"""
         # Arrange
@@ -164,13 +174,28 @@ class TestTwitterClient(unittest.TestCase):
             mock_config.TWITTER_USERNAME = "test_user"
             mock_config.TWITTER_PASSWORD = "test_pass"
             
-            # Act & Assert
-            with self.assertRaises(Exception) as context:
-                self.twitter_client._create_new_cookies(Path("test_path"))
-            
-            self.assertIn("LoginEnterPassword not found in response", str(context.exception))
-            # Verify retry behavior
-            self.assertEqual(mock_handler.get_cookies.call_count, 3)
+            # Mock file operations
+            mock_open_obj = mock_open()
+            with patch('builtins.open', mock_open_obj):
+                # Act & Assert
+                with self.assertRaises(Exception) as context:
+                    self.twitter_client._create_new_cookies(Path("test_path"))
+                
+                self.assertIn("LoginEnterPassword not found in response", str(context.exception))
+                # Verify retry behavior
+                self.assertEqual(mock_handler.get_cookies.call_count, 3)
+                # The CookieSessionUserHandler is called three times due to the retry decorator
+                self.assertEqual(mock_cookie_handler.call_count, 3)
+                # Verify all calls including constructor and method calls
+                expected_calls = [
+                    call(screen_name="test_user", password="test_pass"),
+                    call().get_cookies(),
+                    call(screen_name="test_user", password="test_pass"),
+                    call().get_cookies(),
+                    call(screen_name="test_user", password="test_pass"),
+                    call().get_cookies()
+                ]
+                mock_cookie_handler.assert_has_calls(expected_calls, any_order=True)
 
     @patch('src.social.twitter.TwitterOpenapiPython')
     def test_get_timeline_default_limit(self, mock_twitter_api, mock_sleep):
