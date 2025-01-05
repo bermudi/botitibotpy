@@ -1,5 +1,5 @@
 import unittest
-from unittest.mock import patch, MagicMock, call
+from unittest.mock import patch, MagicMock, call, mock_open
 from src.social.twitter import TwitterClient
 from pathlib import Path
 import json
@@ -9,20 +9,26 @@ class TestTwitterClient(unittest.TestCase):
     @patch('tweepy_authlib.CookieSessionUserHandler')
     def setUp(self, mock_cookie_handler):
         """Setup test environment"""
-        # Set up mock handler
-        mock_handler_instance = MagicMock()
-        mock_cookies = MagicMock()
-        mock_cookies.get_dict.return_value = {
+        # Create mock cookies with required fields
+        mock_cookies_dict = {
             "auth_token": "test_token",
             "ct0": "test_ct0"
         }
-        mock_handler_instance.get_cookies.return_value = mock_cookies
-        mock_cookie_handler.return_value = mock_handler_instance
+        # Simplify mock setup
+        mock_handler = MagicMock()
+        mock_handler.get_cookies.return_value.get_dict.return_value = mock_cookies_dict
+        mock_cookie_handler.return_value = mock_handler
 
+        # Mock the Config
         with patch('src.social.twitter.Config') as mock_config:
             mock_config.TWITTER_USERNAME = "test_user"
             mock_config.TWITTER_PASSWORD = "test_pass"
-            self.twitter_client = TwitterClient()
+            with patch('src.social.twitter.TwitterOpenapiPython') as mock_twitter_api:
+                mock_client = MagicMock()
+                mock_twitter_api.return_value = mock_client
+                mock_client.get_client_from_cookies.return_value = mock_client
+                self.twitter_client = TwitterClient()
+                self.twitter_client.client = mock_client
 
     def _setup_mock_client(self):
         """Helper method to set up a mock client with required attributes"""
@@ -63,7 +69,7 @@ class TestTwitterClient(unittest.TestCase):
         return mock_client, mock_tweet_api
 
     @patch('src.social.twitter.TwitterOpenapiPython')
-    def test_post_content_success(self, mock_twitter_api):
+    def test_post_content_success(self, mock_twitter_api, mock_sleep):
         # Arrange
         content = "Test content"
         mock_client, mock_post_api = self._setup_mock_post_api()
@@ -77,7 +83,7 @@ class TestTwitterClient(unittest.TestCase):
         self.assertTrue(result)
 
     @patch('src.social.twitter.TwitterOpenapiPython')
-    def test_post_content_error_handling(self, mock_twitter_api):
+    def test_post_content_error_handling(self, mock_twitter_api, mock_sleep):
         # Arrange
         mock_client = MagicMock()
         mock_post_api = MagicMock()
@@ -100,37 +106,74 @@ class TestTwitterClient(unittest.TestCase):
         ])
 
     @patch('tweepy_authlib.CookieSessionUserHandler')
-    def test_create_new_cookies(self, mock_cookie_handler):
+    def test_create_new_cookies(self, mock_cookie_handler, mock_sleep):
         """Test creating new cookies"""
         # Arrange
-        mock_handler_instance = MagicMock()
         mock_cookies = MagicMock()
         mock_cookies.get_dict.return_value = {
             "auth_token": "test_token",
             "ct0": "test_ct0"
         }
-        mock_handler_instance.get_cookies.return_value = mock_cookies
-        mock_cookie_handler.return_value = mock_handler_instance
+        mock_handler = MagicMock()
+        mock_handler.get_cookies.return_value = mock_cookies
+        mock_cookie_handler.return_value = mock_handler
 
         # Mock Config values
         with patch('src.social.twitter.Config') as mock_config:
             mock_config.TWITTER_USERNAME = "test_user"
             mock_config.TWITTER_PASSWORD = "test_pass"
             
-            with patch('builtins.open', create=True) as mock_open:
+            # Mock file operations
+            mock_open_obj = mock_open()
+            with patch('builtins.open', mock_open_obj):
                 # Act
-                cookies = self.twitter_client._create_new_cookies(Path("test_path"))
+                result = self.twitter_client._create_new_cookies(Path("test_path"))
 
                 # Assert
-                self.assertEqual(cookies["auth_token"], "test_token")
-                self.assertEqual(cookies["ct0"], "test_ct0")
+                self.assertEqual(result, {
+                    "auth_token": "test_token",
+                    "ct0": "test_ct0"
+                })
                 mock_cookie_handler.assert_called_once_with(
                     screen_name="test_user",
                     password="test_pass"
                 )
+                mock_handler.get_cookies.assert_called_once()
+                mock_open_obj.assert_called_once_with(Path("test_path"), "w")
+
+    def test_create_new_cookies_missing_credentials(self, mock_sleep):
+        """Test creating new cookies with missing credentials"""
+        with patch('src.social.twitter.Config') as mock_config:
+            mock_config.TWITTER_USERNAME = None
+            mock_config.TWITTER_PASSWORD = None
+            
+            with self.assertRaises(ValueError) as context:
+                self.twitter_client._create_new_cookies(Path("test_path"))
+            
+            self.assertIn("Twitter credentials not found", str(context.exception))
+
+    @patch('tweepy_authlib.CookieSessionUserHandler')
+    def test_create_new_cookies_auth_failure(self, mock_cookie_handler, mock_sleep):
+        """Test creating new cookies with authentication failure"""
+        # Arrange
+        mock_handler = MagicMock()
+        mock_handler.get_cookies.side_effect = Exception("LoginEnterPassword not found in response")
+        mock_cookie_handler.return_value = mock_handler
+
+        with patch('src.social.twitter.Config') as mock_config:
+            mock_config.TWITTER_USERNAME = "test_user"
+            mock_config.TWITTER_PASSWORD = "test_pass"
+            
+            # Act & Assert
+            with self.assertRaises(Exception) as context:
+                self.twitter_client._create_new_cookies(Path("test_path"))
+            
+            self.assertIn("LoginEnterPassword not found in response", str(context.exception))
+            # Verify retry behavior
+            self.assertEqual(mock_handler.get_cookies.call_count, 3)
 
     @patch('src.social.twitter.TwitterOpenapiPython')
-    def test_get_timeline_default_limit(self, mock_twitter_api):
+    def test_get_timeline_default_limit(self, mock_twitter_api, mock_sleep):
         # Arrange
         mock_timeline = MagicMock()
         mock_client, mock_user_api = self._setup_mock_user_api(mock_timeline)
@@ -144,7 +187,7 @@ class TestTwitterClient(unittest.TestCase):
         mock_user_api.get_home_timeline.assert_called_once_with(count=20)
 
     @patch('src.social.twitter.TwitterOpenapiPython')
-    def test_get_timeline_custom_limit(self, mock_twitter_api):
+    def test_get_timeline_custom_limit(self, mock_twitter_api, mock_sleep):
         # Arrange
         mock_client = MagicMock()
         mock_user_api = MagicMock()
@@ -162,7 +205,7 @@ class TestTwitterClient(unittest.TestCase):
         mock_user_api.get_home_timeline.assert_called_once_with(count=custom_limit)
 
     @patch('src.social.twitter.TwitterOpenapiPython')
-    def test_get_tweet_thread(self, mock_twitter_api):
+    def test_get_tweet_thread(self, mock_twitter_api, mock_sleep):
         # Arrange
         mock_thread = MagicMock()
         mock_client, mock_tweet_api = self._setup_mock_tweet_api(mock_thread)
@@ -177,7 +220,7 @@ class TestTwitterClient(unittest.TestCase):
         mock_tweet_api.get_tweet_detail.assert_called_once_with(tweet_id)
 
     @patch('src.social.twitter.TwitterOpenapiPython')
-    def test_like_tweet_success(self, mock_twitter_api):
+    def test_like_tweet_success(self, mock_twitter_api, mock_sleep):
         # Arrange
         mock_client = MagicMock()
         mock_tweet_api = MagicMock()
@@ -194,7 +237,7 @@ class TestTwitterClient(unittest.TestCase):
         mock_tweet_api.favorite_tweet.assert_called_once_with(tweet_id)
 
     @patch('src.social.twitter.TwitterOpenapiPython')
-    def test_reply_to_tweet_success(self, mock_twitter_api):
+    def test_reply_to_tweet_success(self, mock_twitter_api, mock_sleep):
         # Arrange
         mock_client = MagicMock()
         mock_post_api = MagicMock()
@@ -215,7 +258,7 @@ class TestTwitterClient(unittest.TestCase):
         )
 
     @patch('src.social.twitter.TwitterOpenapiPython')
-    def test_get_author_feed_specific_user(self, mock_twitter_api):
+    def test_get_author_feed_specific_user(self, mock_twitter_api, mock_sleep):
         # Arrange
         mock_client = MagicMock()
         mock_user_api = MagicMock()
@@ -244,7 +287,7 @@ class TestTwitterClient(unittest.TestCase):
     @patch('pathlib.Path.exists')
     @patch('builtins.open')
     @patch('json.load')
-    def test_setup_auth_existing_cookies(self, mock_json_load, mock_open, mock_exists):
+    def test_setup_auth_existing_cookies(self, mock_json_load, mock_open, mock_exists, mock_sleep):
         # Arrange
         mock_exists.return_value = True
         mock_cookies = {
@@ -266,7 +309,7 @@ class TestTwitterClient(unittest.TestCase):
         mock_client.get_client_from_cookies.assert_called_once_with(cookies=mock_cookies)
 
     @patch('src.social.twitter.TwitterOpenapiPython')
-    def test_retry_mechanism_all_failures(self, mock_twitter_api):
+    def test_retry_mechanism_all_failures(self, mock_twitter_api, mock_sleep):
         """Test behavior when all retry attempts fail"""
         mock_client, mock_post_api = self._setup_mock_post_api(
             side_effect=Exception("Persistent failure")
@@ -278,7 +321,7 @@ class TestTwitterClient(unittest.TestCase):
         self.assertEqual(mock_post_api.post_create_tweet.call_count, 3)
 
     @patch('src.social.twitter.TwitterOpenapiPython')
-    def test_retry_mechanism(self, mock_twitter_api):
+    def test_retry_mechanism(self, mock_twitter_api, mock_sleep):
         """Test that retry mechanism works correctly"""
         mock_client, mock_post_api = self._setup_mock_post_api(
             side_effect=[

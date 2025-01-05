@@ -67,21 +67,30 @@ class TwitterClient:
             cookies_dict = json.load(f)
             return {k["name"]: k["value"] for k in cookies_dict} if isinstance(cookies_dict, list) else cookies_dict
             
+    @retry_on_failure(max_retries=3, delay=2)
     def _create_new_cookies(self, cookie_path: Path) -> Dict:
-        """Create and save new cookies"""
+        """Create and save new cookies with retry mechanism"""
         logger.debug("Creating new cookies")
         if not Config.TWITTER_USERNAME or not Config.TWITTER_PASSWORD:
             raise ValueError("Twitter credentials not found in config")
             
-        auth_handler = CookieSessionUserHandler(
-            screen_name=Config.TWITTER_USERNAME,
-            password=Config.TWITTER_PASSWORD
-        )
-        cookies_dict = auth_handler.get_cookies().get_dict()
-        
-        with open(cookie_path, "w") as f:
-            json.dump(cookies_dict, f, ensure_ascii=False, indent=4)
-        return cookies_dict
+        try:
+            auth_handler = CookieSessionUserHandler(
+                screen_name=Config.TWITTER_USERNAME,
+                password=Config.TWITTER_PASSWORD
+            )
+            logger.debug("Created auth handler, attempting to get cookies")
+            cookies_dict = auth_handler.get_cookies().get_dict()
+            logger.debug("Successfully obtained cookies")
+            
+            with open(cookie_path, "w") as f:
+                json.dump(cookies_dict, f, ensure_ascii=False, indent=4)
+            logger.info("Successfully saved new cookies to file")
+            return cookies_dict
+            
+        except Exception as e:
+            logger.error(f"Failed to create new cookies: {e}")
+            raise
         
     def _validate_cookies(self, cookies_dict: Dict) -> None:
         """Validate cookie structure and contents"""
