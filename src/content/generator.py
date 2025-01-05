@@ -7,7 +7,7 @@ import feedparser
 from bs4 import BeautifulSoup
 from datetime import datetime
 from typing import Optional, Dict, Any, List, Tuple
-from llama_index import VectorStoreIndex, SimpleDirectoryReader, Settings, StorageContext, Document
+from llama_index.core import VectorStoreIndex, SimpleDirectoryReader, Settings, StorageContext, Document
 from llama_index.vector_stores.chroma import ChromaVectorStore
 from llama_index.llms.openai import OpenAI
 from llama_index.embeddings.gemini import GeminiEmbedding
