@@ -54,10 +54,10 @@ class QueueManager:
         """
         logger.info(f"Adding task {task.id} with priority {task.priority}")
         heapq.heappush(self.task_queue, task)
-        # Wait for any existing tasks to finish processing
-        await asyncio.sleep(0.05)
         # Schedule queue processing
         asyncio.create_task(self._process_queue())
+        # Wait a small amount of time to ensure task is properly queued
+        await asyncio.sleep(0.1)
         return task.id
         
     async def cancel_task(self, task_id: str) -> bool:
@@ -99,9 +99,6 @@ class QueueManager:
                     'error': 'Task cancelled before execution',
                     'completed_at': datetime.now()
                 }
-                # Clean up any existing result
-                if task_id in self.task_results:
-                    del self.task_results[task_id]
                 return True
                 
         return False
@@ -170,9 +167,8 @@ class QueueManager:
                             return
                             
                         retry_count += 1
-                        logger.warning(f"Task {task.id} failed, attempt {retry_count}/{task.max_retries + 1}: {str(e)}")
-                        
                         if retry_count <= task.max_retries:
+                            logger.warning(f"Task {task.id} failed, attempt {retry_count}/{task.max_retries + 1}: {str(e)}")
                             await asyncio.sleep(0.1)  # Small delay before retry
                             continue
                             
@@ -187,11 +183,12 @@ class QueueManager:
                     
         except asyncio.CancelledError:
             # Handle task cancellation
-            self.task_results[task.id] = {
-                'status': 'cancelled',
-                'error': 'Task cancelled during execution',
-                'completed_at': datetime.now()
-            }
+            if task.id in self.task_results:
+                self.task_results[task.id] = {
+                    'status': 'cancelled',
+                    'error': 'Task cancelled during execution',
+                    'completed_at': datetime.now()
+                }
             raise
         finally:
             # Clean up
