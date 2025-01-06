@@ -1,6 +1,7 @@
-from datetime import datetime
+from datetime import datetime, timedelta
 from typing import Optional, List, Dict, Any
 from sqlalchemy.orm import Session
+from sqlalchemy import and_
 
 from . import models
 from .models import Platform
@@ -59,6 +60,20 @@ class DatabaseOperations:
         return self.db.query(models.Post).filter(
             models.Post.platform_post_id == platform_post_id
         ).first()
+        
+    def get_recent_posts(self, hours: int = 24) -> List[models.Post]:
+        """Get posts from the last specified number of hours.
+        
+        Args:
+            hours: Number of hours to look back (default: 24)
+            
+        Returns:
+            List[models.Post]: List of posts from the specified time period
+        """
+        cutoff_time = datetime.utcnow() - timedelta(hours=hours)
+        return self.db.query(models.Post).filter(
+            models.Post.created_at >= cutoff_time
+        ).all()
 
     # Engagement metrics operations
     def update_engagement_metrics(
