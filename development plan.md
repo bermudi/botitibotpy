@@ -58,16 +58,10 @@
   - [x] Reply checking automation (5-minute intervals)
   - [x] Async task management
   - [ ] Configurable scheduling intervals
-  - [ ] Task priority management
   - [ ] Task queue management
 - [x] Metrics Collection
   - [x] Basic engagement tracking
   - [x] Automated collection (10-minute intervals)
-  - [ ] Advanced analytics
-    - [ ] Trend analysis
-    - [ ] Performance reporting
-    - [ ] Content effectiveness scoring
-  - [ ] Custom metric definitions
 - [ ] Error Recovery
   - [ ] Failed task retry mechanism
   - [ ] Rate limit handling
@@ -77,7 +71,31 @@
   - [ ] Performance monitoring
   - [ ] Resource usage tracking
 
-### Phase 6: API Implementation
+### Phase 6: CLI Implementation
+- [ ] Core CLI Framework
+  - [ ] Command-line argument parsing
+  - [ ] Configuration management via CLI
+  - [ ] Interactive mode
+- [ ] Content Management Commands
+  - [ ] Generate content manually
+  - [ ] List/view generated content
+  - [ ] Test content generation with different parameters
+- [ ] Social Media Management
+  - [ ] Platform authentication setup
+  - [ ] Manual post creation/scheduling
+  - [ ] View scheduled posts
+  - [ ] Cancel/modify scheduled posts
+- [ ] System Management
+  - [ ] Start/stop scheduler
+  - [ ] View active tasks
+  - [ ] View system status
+  - [ ] Basic monitoring commands
+- [ ] Testing Utilities
+  - [ ] Mock post generation
+  - [ ] Dry-run capabilities
+  - [ ] Performance testing tools
+
+### Phase 7: API Implementation
 - [ ] Core API Setup
   - [ ] FastAPI integration
   - [ ] Authentication & authorization
@@ -105,7 +123,7 @@
   - [ ] Event streaming
   - [ ] Client notifications
 
-### Phase 7: Testing & Refinement
+### Phase 8: Testing & Refinement
 - [ ] Test Suite Development
   - [ ] Unit tests
   - [ ] Integration tests
@@ -116,14 +134,21 @@
   - [ ] Content generation testing
   - [ ] Interaction testing
 
-### Phase 8: Advanced Features
+
+### Phase 9: Advanced Features and Optional Enhancements (in order of priority)
 - [ ] Enhanced Error Handling
   - [ ] Logging system
   - [ ] Error recovery
   - [ ] Notification system
+- [ ] Task priority management
+- [ ] Advanced analytics
+  - [ ] Trend analysis
+  - [ ] Performance reporting
+  - [ ] Content effectiveness scoring
+  - [ ] Custom metric definitions
+  - [ ] Performance analytics
 - [ ] Content Optimization
   - [ ] A/B testing
-  - [ ] Performance analytics
   - [ ] Content refinement
 - [ ] Advanced Scheduling
   - [ ] Smart timing optimization
