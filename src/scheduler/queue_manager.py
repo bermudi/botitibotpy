@@ -70,6 +70,7 @@ class QueueManager:
         # Check if task is running
         if task_id in self.running_tasks:
             task = self.running_tasks[task_id]
+            # Set status before cancelling to prevent race conditions
             self.task_results[task_id] = {
                 'status': 'cancelled',
                 'error': 'Task cancelled during execution',
@@ -80,6 +81,8 @@ class QueueManager:
                 await task
             except (asyncio.CancelledError, Exception):
                 pass
+            if task_id in self.running_tasks:
+                del self.running_tasks[task_id]
             return True
             
         # Check if task is queued
@@ -94,6 +97,8 @@ class QueueManager:
                     'error': 'Task cancelled before execution',
                     'completed_at': datetime.now()
                 }
+                if task_id in self.running_tasks:
+                    del self.running_tasks[task_id]
                 return True
                 
         return False
@@ -162,8 +167,9 @@ class QueueManager:
                             return
                             
                         retry_count += 1
+                        logger.warning(f"Task {task.id} failed, attempt {retry_count}/{task.max_retries + 1}: {str(e)}")
+                        
                         if retry_count <= task.max_retries:
-                            logger.warning(f"Task {task.id} failed, attempt {retry_count}/{task.max_retries + 1}: {str(e)}")
                             await asyncio.sleep(0.1)  # Small delay before retry
                             continue
                             
@@ -175,7 +181,7 @@ class QueueManager:
                                 'error': str(e),
                                 'completed_at': datetime.now()
                             }
-                        raise
+                        return
                     
         except asyncio.CancelledError:
             # Handle task cancellation
