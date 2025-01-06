@@ -139,6 +139,10 @@ class QueueManager:
                 retry_count = 0
                 while retry_count <= task.max_retries:
                     try:
+                        # Check if task was cancelled
+                        if task.id in self.task_results and self.task_results[task.id]['status'] == 'cancelled':
+                            return
+                            
                         # Run the task
                         result = await task.coroutine(*task.args, **(task.kwargs or {}))
                         
@@ -153,6 +157,10 @@ class QueueManager:
                         return
                         
                     except Exception as e:
+                        # Check if task was cancelled
+                        if task.id in self.task_results and self.task_results[task.id]['status'] == 'cancelled':
+                            return
+                            
                         retry_count += 1
                         if retry_count <= task.max_retries:
                             logger.warning(f"Task {task.id} failed, attempt {retry_count}/{task.max_retries + 1}: {str(e)}")
