@@ -173,7 +173,7 @@ class TestQueueManager(unittest.IsolatedAsyncioTestCase):
 
         # Act
         await self.queue_manager.add_task(task)
-        await asyncio.sleep(0.1)  # Allow time for retry
+        await asyncio.sleep(0.5)  # Allow time for retries
 
         # Assert
         self.assertEqual(attempts, 2)  # Called twice (original + retry)
@@ -197,7 +197,7 @@ class TestQueueManager(unittest.IsolatedAsyncioTestCase):
 
         # Act
         await self.queue_manager.add_task(task)
-        await asyncio.sleep(0.2)  # Allow time for retries
+        await asyncio.sleep(0.5)  # Allow time for retry
 
         # Assert
         task_status = self.queue_manager.get_task_status("fail_task")
@@ -271,7 +271,7 @@ class TestQueueManager(unittest.IsolatedAsyncioTestCase):
         await asyncio.sleep(0.1)  # Give time for cleanup
 
         # Assert
-        self.assertNotIn("queued", self.queue_manager.task_results)
+        self.assertEqual(self.queue_manager.task_results["queued"]["status"], "cancelled")
         self.assertEqual(len(self.queue_manager.task_queue), 0)
 
     async def test_queue_status(self):

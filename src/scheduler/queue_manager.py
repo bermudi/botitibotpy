@@ -42,6 +42,8 @@ class QueueManager:
         self.running_tasks: Dict[str, asyncio.Task] = {}
         self.semaphore = asyncio.Semaphore(max_concurrent_tasks)
         self.task_results: Dict[str, Any] = {}
+        self.cancelled_tasks = set()  # Track cancelled tasks
+        self.queue_lock = asyncio.Lock()  # Lock for queue operations
         
     async def add_task(self, task: Task) -> str:
         """Add a task to the queue
@@ -53,11 +55,14 @@ class QueueManager:
             str: ID of added task
         """
         logger.info(f"Adding task {task.id} with priority {task.priority}")
-        heapq.heappush(self.task_queue, task)
-        # Schedule queue processing
-        asyncio.create_task(self._process_queue())
-        # Wait a small amount of time to ensure task is properly queued
-        await asyncio.sleep(0.1)
+        
+        async with self.queue_lock:
+            # Add task to queue
+            heapq.heappush(self.task_queue, task)
+            
+            # Schedule queue processing
+            asyncio.create_task(self._process_queue())
+            
         return task.id
         
     async def cancel_task(self, task_id: str) -> bool:
@@ -69,15 +74,17 @@ class QueueManager:
         Returns:
             bool: True if task was cancelled, False if not found
         """
+        # Mark as cancelled first
+        self.cancelled_tasks.add(task_id)
+        self.task_results[task_id] = {
+            'status': 'cancelled',
+            'error': 'Task cancelled',
+            'completed_at': datetime.now()
+        }
+        
         # Check if task is running
         if task_id in self.running_tasks:
             task = self.running_tasks[task_id]
-            # Set status before cancelling to prevent race conditions
-            self.task_results[task_id] = {
-                'status': 'cancelled',
-                'error': 'Task cancelled during execution',
-                'completed_at': datetime.now()
-            }
             task.cancel()
             try:
                 await task
@@ -92,44 +99,40 @@ class QueueManager:
             if task.id == task_id:
                 # Remove from queue
                 self.task_queue.remove(task)
-                heapq.heapify(self.task_queue)
-                # Store result
-                self.task_results[task_id] = {
-                    'status': 'cancelled',
-                    'error': 'Task cancelled before execution',
-                    'completed_at': datetime.now()
-                }
+                heapq.heapify(self.task_queue)  # Maintain heap property
                 return True
                 
         return False
         
     async def _process_queue(self):
         """Process tasks in the queue based on priority"""
-        if not self.task_queue:
-            return
+        async with self.queue_lock:
+            if not self.task_queue:
+                return
 
-        # Only process if we're under the concurrent task limit
-        if len(self.running_tasks) >= self.max_concurrent_tasks:
-            return
+            # Only process if we're under the concurrent task limit
+            if len(self.running_tasks) >= self.max_concurrent_tasks:
+                return
 
-        # Get next task
-        task = heapq.heappop(self.task_queue)
-        
-        # Check if task was cancelled before processing
-        if task.id in self.task_results and self.task_results[task.id]['status'] == 'cancelled':
-            return
+            # Get next task
+            task = heapq.heappop(self.task_queue)
             
-        # Create and store the task
-        running_task = asyncio.create_task(self._run_task(task))
-        self.running_tasks[task.id] = running_task
-        # Set initial status
-        self.task_results[task.id] = {
-            'status': 'running',
-            'started_at': datetime.now()
-        }
-        
-        # Schedule next task processing
-        asyncio.create_task(self._process_queue())
+            # Check if task was cancelled
+            if task.id in self.cancelled_tasks:
+                # Skip cancelled tasks
+                asyncio.create_task(self._process_queue())  # Continue processing queue
+                return
+                
+            # Create and store the task
+            running_task = asyncio.create_task(self._run_task(task))
+            self.running_tasks[task.id] = running_task
+            self.task_results[task.id] = {
+                'status': 'running',
+                'started_at': datetime.now()
+            }
+            
+            # Schedule next task processing
+            asyncio.create_task(self._process_queue())
                 
     async def _run_task(self, task: Task):
         """Run a task with the semaphore and handle retries
@@ -139,20 +142,26 @@ class QueueManager:
         """
         logger.info(f"Starting task {task.id}")
         
+        # Check if cancelled before starting
+        if task.id in self.cancelled_tasks:
+            if task.id in self.running_tasks:
+                del self.running_tasks[task.id]
+            return
+        
         try:
-            async with self.semaphore:  # Use context manager for proper semaphore handling
+            async with self.semaphore:
                 retry_count = 0
-                while retry_count <= task.max_retries:
+                while True:  # Loop until success or max retries exceeded
                     try:
-                        # Check if task was cancelled
-                        if task.id in self.task_results and self.task_results[task.id]['status'] == 'cancelled':
+                        # Check if cancelled before each attempt
+                        if task.id in self.cancelled_tasks:
                             return
                             
                         # Run the task
                         result = await task.coroutine(*task.args, **(task.kwargs or {}))
                         
-                        # Store result if task wasn't cancelled
-                        if task.id in self.task_results and self.task_results[task.id]['status'] != 'cancelled':
+                        # Store result only if not cancelled
+                        if task.id not in self.cancelled_tasks:
                             self.task_results[task.id] = {
                                 'status': 'completed',
                                 'result': result,
@@ -163,23 +172,22 @@ class QueueManager:
                         
                     except Exception as e:
                         # Check if task was cancelled
-                        if task.id in self.task_results and self.task_results[task.id]['status'] == 'cancelled':
+                        if task.id in self.cancelled_tasks:
+                            return
+                            
+                        if retry_count >= task.max_retries:
+                            # Store error after max retries
+                            logger.error(f"Task {task.id} failed: {str(e)}")
+                            self.task_results[task.id] = {
+                                'status': 'failed',
+                                'error': str(e),
+                                'completed_at': datetime.now()
+                            }
                             return
                             
                         retry_count += 1
-                        if retry_count <= task.max_retries:
-                            logger.warning(f"Task {task.id} failed, attempt {retry_count}/{task.max_retries + 1}: {str(e)}")
-                            await asyncio.sleep(0.1)  # Small delay before retry
-                            continue
-                            
-                        # Store error after max retries
-                        logger.error(f"Task {task.id} failed: {str(e)}")
-                        self.task_results[task.id] = {
-                            'status': 'failed',
-                            'error': str(e),
-                            'completed_at': datetime.now()
-                        }
-                        return
+                        logger.warning(f"Task {task.id} failed, attempt {retry_count}/{task.max_retries}: {str(e)}")
+                        await asyncio.sleep(0.1)  # Small delay before retry
                     
         except asyncio.CancelledError:
             # Handle task cancellation
