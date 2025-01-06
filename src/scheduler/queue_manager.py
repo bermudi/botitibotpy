@@ -47,14 +47,16 @@ class QueueManager:
         """Add a task to the queue
         
         Args:
-            task: Task object containing the coroutine and metadata
+            task: Task to add
             
         Returns:
-            str: Task ID
+            str: ID of added task
         """
         logger.info(f"Adding task {task.id} with priority {task.priority}")
         heapq.heappush(self.task_queue, task)
-        # Create a new task to process the queue
+        # Wait for any existing tasks to finish processing
+        await asyncio.sleep(0.05)
+        # Schedule queue processing
         asyncio.create_task(self._process_queue())
         return task.id
         
@@ -97,8 +99,9 @@ class QueueManager:
                     'error': 'Task cancelled before execution',
                     'completed_at': datetime.now()
                 }
-                if task_id in self.running_tasks:
-                    del self.running_tasks[task_id]
+                # Clean up any existing result
+                if task_id in self.task_results:
+                    del self.task_results[task_id]
                 return True
                 
         return False
@@ -175,12 +178,11 @@ class QueueManager:
                             
                         # Store error after max retries
                         logger.error(f"Task {task.id} failed: {str(e)}")
-                        if task.id in self.task_results and self.task_results[task.id]['status'] != 'cancelled':
-                            self.task_results[task.id] = {
-                                'status': 'failed',
-                                'error': str(e),
-                                'completed_at': datetime.now()
-                            }
+                        self.task_results[task.id] = {
+                            'status': 'failed',
+                            'error': str(e),
+                            'completed_at': datetime.now()
+                        }
                         return
                     
         except asyncio.CancelledError:
