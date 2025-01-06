@@ -5,6 +5,11 @@ from typing import Optional, Dict, Any, List
 from sqlalchemy.orm import Session
 from dataclasses import dataclass
 from .queue_manager import QueueManager, Task, TaskPriority
+from ..database.operations import DatabaseOperations
+from ..content.generator import ContentGenerator
+from ..social.twitter import TwitterClient
+from ..social.bluesky import BlueskyClient
+from ..database.models import Platform, Post
 
 logger = logging.getLogger(__name__)
 
@@ -46,20 +51,15 @@ class TaskScheduler:
         """Start all scheduled tasks"""
         logger.info("Starting scheduled tasks")
         
-        # Start content generation task
-        self.tasks['content_generation'] = asyncio.create_task(
-            self._schedule_content_generation()
-        )
+        # Create tasks for each scheduled job
+        self.tasks = {
+            'content_generation': asyncio.create_task(self._schedule_content_generation()),
+            'metrics_collection': asyncio.create_task(self._schedule_metrics_collection()),
+            'reply_checking': asyncio.create_task(self._schedule_reply_checking())
+        }
         
-        # Start reply checking task
-        self.tasks['reply_checking'] = asyncio.create_task(
-            self._schedule_reply_checking()
-        )
-        
-        # Start metrics collection task
-        self.tasks['metrics_collection'] = asyncio.create_task(
-            self._schedule_metrics_collection()
-        )
+        # Wait for all tasks to complete
+        await asyncio.gather(*self.tasks.values())
         
     async def stop(self):
         """Stop all running tasks"""
@@ -176,71 +176,56 @@ class TaskScheduler:
             raise Exception("Content generation failed")
             
     async def _check_and_handle_replies(self):
-        """Check and handle all unreplied comments"""
-        # Get unreplied comments
-        comments = self.db_ops.get_unreplied_comments()
-        results = []
-        
-        for comment in comments:
-            # Get the associated post
-            post = self.db_ops.get_post(comment.post_id)
-            if not post:
-                continue
-                
-            # Generate reply content
-            reply_content = self.content_generator.direct_prompt(
-                f"Generate a friendly and engaging reply to this comment: {comment.content}"
-            )
-            
-            if reply_content:
-                # Post reply based on platform
-                if post.platform == Platform.TWITTER:
-                    reply_id = await self._reply_on_twitter(
-                        comment.platform_comment_id,
-                        reply_content
+        """Check for and handle any unreplied comments"""
+        try:
+            comments = await self.db_ops.get_unreplied_comments()
+            for comment in comments:
+                try:
+                    reply_content = self.content_generator.direct_prompt(
+                        f"Generate a friendly and engaging reply to this comment: {comment.content}"
                     )
-                else:  # Bluesky
-                    reply_id = await self._reply_on_bluesky(
-                        comment.platform_comment_id,
-                        reply_content
-                    )
-                    
-                if reply_id:
-                    # Mark comment as replied
-                    self.db_ops.mark_comment_replied(
-                        comment.id,
-                        reply_id,
-                        reply_content
-                    )
-                    results.append({
-                        'comment_id': comment.id,
-                        'reply_id': reply_id
-                    })
-                    
-        return results
+                    if reply_content:
+                        # Post reply based on platform
+                        if comment.platform == Platform.TWITTER:
+                            reply_id = await self._reply_on_twitter(
+                                comment.platform_comment_id,
+                                reply_content
+                            )
+                        else:  # Bluesky
+                            reply_id = await self._reply_on_bluesky(
+                                comment.platform_comment_id,
+                                reply_content
+                            )
+                            
+                        if reply_id:
+                            # Mark comment as replied
+                            self.db_ops.mark_comment_replied(
+                                comment.id,
+                                reply_id,
+                                reply_content
+                            )
+                except Exception as e:
+                    logger.error(f"Error handling reply for comment {comment.id}: {str(e)}", exc_info=True)
+        except Exception as e:
+            logger.error(f"Error checking replies: {str(e)}", exc_info=True)
             
     async def _collect_all_metrics(self):
         """Collect metrics for all recent posts"""
-        recent_posts = self._get_recent_posts()
-        results = []
-        
-        for post in recent_posts:
-            metrics = await self._collect_post_metrics(post)
-            if metrics:
-                self.db_ops.update_engagement_metrics(
-                    post.id,
-                    likes=metrics['likes'],
-                    replies=metrics['replies'],
-                    reposts=metrics['reposts'],
-                    views=metrics.get('views', 0)
-                )
-                results.append({
-                    'post_id': post.id,
-                    'metrics': metrics
-                })
-                
-        return results
-
+        try:
+            recent_posts = await self.db_ops.get_recent_posts(hours=24)
+            for post in recent_posts:
+                metrics = await self._collect_post_metrics(post)
+                if metrics:
+                    await self.db_ops.update_engagement_metrics(
+                        post.id,
+                        likes=metrics['likes'],
+                        replies=metrics['replies'],
+                        reposts=metrics['reposts'],
+                        views=metrics.get('views', 0)
+                    )
+        except Exception as e:
+            logger.error(f"Error collecting metrics: {str(e)}", exc_info=True)
+            
     async def _post_to_platform(self, platform: Platform, content: str) -> Optional[str]:
         """Post content to a specific platform
         
