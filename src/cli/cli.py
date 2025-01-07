@@ -52,7 +52,68 @@ def main(debug):
         logging.basicConfig(level=logging.DEBUG)
     else:
         logging.basicConfig(level=logging.INFO)
-        
+
+@main.group()
+def content():
+    """Content generation and management commands"""
+    pass
+
+@content.command()
+@click.argument('prompt')
+@click.option('--length', type=int, default=280, help='Maximum content length')
+@click.option('--tone', type=click.Choice(['casual', 'professional', 'humorous']), default='casual', help='Content tone')
+@click.option('--style', type=click.Choice(['tweet', 'thread', 'article']), default='tweet', help='Content style')
+def generate(prompt: str, length: int, tone: str, style: str):
+    """Generate content using the specified parameters"""
+    try:
+        generator = ContentGenerator()
+        content = generator.generate_post(prompt, max_length=length, tone=tone, style=style)
+        click.echo("\nGenerated Content:")
+        click.echo(content)
+    except Exception as e:
+        logger.error(f"Error generating content: {e}")
+        click.echo(f"Error: {str(e)}", err=True)
+        sys.exit(1)
+
+@content.command()
+@click.argument('url')
+def add_webpage(url: str):
+    """Add a webpage as a content source"""
+    try:
+        generator = ContentGenerator()
+        generator.load_webpage(url)
+        click.echo(f"Successfully added webpage: {url}")
+    except Exception as e:
+        logger.error(f"Error adding webpage: {e}")
+        click.echo(f"Error: {str(e)}", err=True)
+        sys.exit(1)
+
+@content.command()
+@click.argument('url')
+def add_rss(url: str):
+    """Add an RSS feed as a content source"""
+    try:
+        generator = ContentGenerator()
+        generator.parse_rss_feed(url)
+        click.echo(f"Successfully added RSS feed: {url}")
+    except Exception as e:
+        logger.error(f"Error adding RSS feed: {e}")
+        click.echo(f"Error: {str(e)}", err=True)
+        sys.exit(1)
+
+@content.command()
+@click.argument('directory')
+def add_directory(directory: str):
+    """Add a directory of files as a content source"""
+    try:
+        generator = ContentGenerator()
+        generator.load_content_source(directory)
+        click.echo(f"Successfully added directory: {directory}")
+    except Exception as e:
+        logger.error(f"Error adding directory: {e}")
+        click.echo(f"Error: {str(e)}", err=True)
+        sys.exit(1)
+
 @main.group()
 def social():
     """Social media management commands"""
@@ -189,6 +250,30 @@ async def cancel(post_id: str) -> None:
         click.echo(f"Error: {str(e)}", err=True)
         sys.exit(1)
 
+@social.command()
+@click.argument('platform', type=click.Choice(['twitter', 'bluesky']))
+@async_command
+async def timeline(platform: str) -> None:
+    """View recent posts from your timeline"""
+    try:
+        if platform == 'twitter':
+            client = TwitterClient()
+            posts = await client.get_timeline()
+        else:
+            with BlueskyClient() as client:
+                posts = await client.get_timeline()
+        
+        click.echo("\nRecent Posts:")
+        for post in posts:
+            click.echo(f"Author: {post.author}")
+            click.echo(f"Content: {post.content}")
+            click.echo(f"Engagement: {post.engagement_metrics}")
+            click.echo("")
+    except Exception as e:
+        logger.error(f"Error fetching timeline: {e}")
+        click.echo(f"Error: {str(e)}", err=True)
+        sys.exit(1)
+
 @main.group()
 def system():
     """System management commands"""
@@ -203,17 +288,22 @@ def status() -> None:
         click.echo("\nSystem Status:")
         click.echo(f"Scheduler: {'Running' if status['scheduler_running'] else 'Stopped'}")
         click.echo(f"Tasks queued: {status['tasks_queued']}")
+        click.echo(f"CPU Usage: {status['cpu_percent']}%")
+        click.echo(f"Memory Usage: {status['memory_percent']}%")
+        click.echo(f"Disk Usage: {status['disk_usage_percent']}%")
     except Exception as e:
         logger.error(f"Error getting system status: {e}")
         click.echo(f"Error: {str(e)}", err=True)
         sys.exit(1)
 
 @system.command()
-def start() -> None:
+@async_command
+async def start() -> None:
     """Start the task scheduler"""
     try:
-        scheduler = TaskScheduler()
-        scheduler.start()
+        db = get_db()
+        scheduler = TaskScheduler(db=db)
+        await scheduler.start()
         click.echo("Scheduler started")
     except Exception as e:
         logger.error(f"Error starting scheduler: {e}")
@@ -221,14 +311,34 @@ def start() -> None:
         sys.exit(1)
 
 @system.command()
-def stop() -> None:
+@async_command
+async def stop() -> None:
     """Stop the task scheduler"""
     try:
-        scheduler = TaskScheduler()
-        scheduler.stop()
+        db = get_db()
+        scheduler = TaskScheduler(db=db)
+        await scheduler.stop()
         click.echo("Scheduler stopped")
     except Exception as e:
         logger.error(f"Error stopping scheduler: {e}")
+        click.echo(f"Error: {str(e)}", err=True)
+        sys.exit(1)
+
+@system.command()
+def metrics() -> None:
+    """View system metrics and performance data"""
+    try:
+        monitoring = SystemMonitoring()
+        metrics = monitoring.get_metrics_summary()
+        click.echo("\nSystem Metrics:")
+        click.echo(f"Task Success Rate: {metrics['success_rate']}%")
+        click.echo(f"Average Task Duration: {metrics['avg_task_duration']}s")
+        click.echo(f"Error Rate: {metrics['error_rate']}%")
+        click.echo("\nActive Alerts:")
+        for alert in metrics['active_alerts']:
+            click.echo(f"- {alert['message']} ({alert['severity']})")
+    except Exception as e:
+        logger.error(f"Error getting metrics: {e}")
         click.echo(f"Error: {str(e)}", err=True)
         sys.exit(1)
 
