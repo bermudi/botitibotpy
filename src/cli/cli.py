@@ -63,25 +63,31 @@ def content():
 @click.option('--length', type=int, default=280, help='Maximum content length')
 @click.option('--tone', type=click.Choice(['casual', 'professional', 'humorous']), default='casual', help='Content tone')
 @click.option('--style', type=click.Choice(['tweet', 'thread', 'article']), default='tweet', help='Content style')
-def generate(prompt: str, length: int, tone: str, style: str):
+@click.option('--use-rag', is_flag=True, default=False, help='Use RAG for content generation')
+def generate(prompt: str, length: int, tone: str, style: str, use_rag: bool):
     """Generate content using the specified parameters"""
     try:
         generator = ContentGenerator()
         
-        # Load content sources and index
-        if not generator.load_content_source("content_sources"):
-            logger.error("Failed to load content sources")
-            click.echo("Error: Failed to load content sources", err=True)
-            sys.exit(1)
+        if use_rag:
+            # Load content sources and index for RAG
+            if not generator.load_content_source("content_sources"):
+                logger.error("Failed to load content sources")
+                click.echo("Error: Failed to load content sources", err=True)
+                sys.exit(1)
+                
+            # Load the index
+            if not generator.load_index():
+                logger.error("Failed to load index")
+                click.echo("Error: Failed to load index", err=True)
+                sys.exit(1)
             
-        # Load the index
-        if not generator.load_index():
-            logger.error("Failed to load index")
-            click.echo("Error: Failed to load index", err=True)
-            sys.exit(1)
+            # Generate content with RAG
+            content = generator.generate_post_withRAG(prompt, max_length=length, tone=tone, style=style)
+        else:
+            # Generate content without RAG
+            content = generator.generate_post(prompt, max_length=length, tone=tone, style=style)
             
-        # Generate content
-        content = generator.generate_post(prompt, max_length=length, tone=tone, style=style)
         if content:
             click.echo("\nGenerated Content:")
             click.echo(content)
@@ -213,10 +219,24 @@ def auth(platform):
 @click.argument('platform', type=click.Choice(['twitter', 'bluesky']))
 @click.argument('content')
 @click.option('--schedule', '-s', help='Schedule post for future (format: YYYY-MM-DD HH:MM)')
+@click.option('--use-rag', is_flag=True, default=False, help='Use RAG for content generation')
+@click.option('--length', type=int, default=280, help='Maximum content length')
+@click.option('--tone', type=click.Choice(['casual', 'professional', 'humorous']), default='casual', help='Content tone')
+@click.option('--style', type=click.Choice(['tweet', 'thread', 'article']), default='tweet', help='Content style')
 @async_command
-async def post(platform: str, content: str, schedule: Optional[str] = None) -> None:
-    """Post content to a social media platform"""
+async def post(platform: str, content: str, schedule: Optional[str] = None, use_rag: bool = False,
+               length: Optional[int] = None, tone: Optional[str] = None, style: Optional[str] = None) -> None:
+    """Post content to a social media platform with optional content generation"""
     try:
+        # Prepare generation kwargs if any generation options are provided
+        generation_kwargs = {}
+        if any([length, tone, style]):
+            generation_kwargs.update({
+                'max_length': length,
+                'tone': tone,
+                'style': style
+            })
+
         if schedule:
             try:
                 schedule_time = datetime.strptime(schedule, "%Y-%m-%d %H:%M")
@@ -235,7 +255,8 @@ async def post(platform: str, content: str, schedule: Optional[str] = None) -> N
                         priority=TaskPriority.MEDIUM,
                         created_at=datetime.now(),
                         coroutine=client.post_content,
-                        args=(content,)
+                        args=(content,),
+                        kwargs={'use_rag': use_rag, **generation_kwargs}
                     )
                 else:
                     client = BlueskyClient()
@@ -244,7 +265,8 @@ async def post(platform: str, content: str, schedule: Optional[str] = None) -> N
                         priority=TaskPriority.MEDIUM,
                         created_at=datetime.now(),
                         coroutine=client.post_content,
-                        args=(content,)
+                        args=(content,),
+                        kwargs={'use_rag': use_rag, **generation_kwargs}
                     )
                 post_id = await queue.add_task(task, scheduled_time=schedule_time)
                 click.echo(f"Post scheduled with ID: {post_id}")
@@ -254,11 +276,14 @@ async def post(platform: str, content: str, schedule: Optional[str] = None) -> N
         else:
             if platform == 'twitter':
                 client = TwitterClient()
-                client.post_content(content)
-                click.echo("Posted to Twitter successfully")
+                if client.post_content(content, use_rag=use_rag, **generation_kwargs):
+                    click.echo("Posted to Twitter successfully")
+                else:
+                    click.echo("Failed to post to Twitter", err=True)
+                    sys.exit(1)
             elif platform == 'bluesky':
                 with BlueskyClient() as client:
-                    result = client.post_content(content)
+                    result = client.post_content(content, use_rag=use_rag, **generation_kwargs)
                     if result:
                         click.echo("Posted to Bluesky successfully")
                     else:

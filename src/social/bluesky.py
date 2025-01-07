@@ -433,8 +433,34 @@ class BlueskyClient:
             return False
     
     @handle_rate_limit("write")
-    def post_content(self, content: str, link: Optional[str] = None) -> Optional[Any]:
+    def post_content(self, content: str, link: Optional[str] = None, use_rag: bool = False, **kwargs) -> Optional[Any]:
         try:
+            # Generate content if kwargs are provided
+            if kwargs:
+                from ..content.generator import ContentGenerator
+                generator = ContentGenerator()
+                
+                if use_rag:
+                    # Load content sources and index for RAG
+                    if not generator.load_content_source("content_sources"):
+                        logger.error("Failed to load content sources")
+                        return None
+                        
+                    # Load the index
+                    if not generator.load_index():
+                        logger.error("Failed to load index")
+                        return None
+                    
+                    # Generate content with RAG
+                    content = generator.generate_post_withRAG(content, **kwargs)
+                else:
+                    # Generate content without RAG
+                    content = generator.generate_post(content, **kwargs)
+                
+                if not content:
+                    logger.error("Failed to generate content")
+                    return None
+
             logger.debug("Creating post content", extra={
                 'context': {
                     'content_length': len(content),

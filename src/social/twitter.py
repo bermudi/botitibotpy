@@ -151,9 +151,35 @@ class TwitterClient:
             raise ValueError(f"Invalid cookie structure. Missing keys: {', '.join(missing)}")
     
     @retry_on_failure()
-    def post_content(self, content: str) -> bool:
-        """Post content to Twitter"""
+    def post_content(self, content: str, use_rag: bool = False, **kwargs) -> bool:
+        """Post content to Twitter with optional RAG support"""
         try:
+            # Generate content if kwargs are provided
+            if kwargs:
+                from ..content.generator import ContentGenerator
+                generator = ContentGenerator()
+                
+                if use_rag:
+                    # Load content sources and index for RAG
+                    if not generator.load_content_source("content_sources"):
+                        logger.error("Failed to load content sources")
+                        return False
+                        
+                    # Load the index
+                    if not generator.load_index():
+                        logger.error("Failed to load index")
+                        return False
+                    
+                    # Generate content with RAG
+                    content = generator.generate_post_withRAG(content, **kwargs)
+                else:
+                    # Generate content without RAG
+                    content = generator.generate_post(content, **kwargs)
+                
+                if not content:
+                    logger.error("Failed to generate content")
+                    return False
+
             self.client.get_post_api().post_create_tweet(tweet_text=content)
             logger.info("Successfully posted content to Twitter", extra={
                 'context': {

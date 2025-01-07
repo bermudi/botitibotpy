@@ -251,7 +251,7 @@ class ContentGenerator:
                 }
             })
             
-    def generate_post(self, prompt: str, max_length: Optional[int] = None,
+    def generate_post_withRAG(self, prompt: str, max_length: Optional[int] = None,
                      tone: Optional[str] = None, style: Optional[str] = None) -> Optional[str]:
         try:
             if not self.index:
@@ -345,13 +345,39 @@ class ContentGenerator:
                     time.sleep(1)
                                     
         except Exception as e:
-            logger.error(f"Error in generate_post: {str(e)}", exc_info=True, extra={
+            logger.error(f"Error in generate_post_withRAG: {str(e)}", exc_info=True, extra={
                 'context': {
                     'component': 'content_generator.post'
                 }
             })
             return None
-            
+
+    def generate_post(self, prompt: str, max_length: Optional[int] = None,
+                     tone: Optional[str] = None, style: Optional[str] = None) -> Optional[str]:
+        """Generate content using direct LLM without RAG"""
+        try:
+            complete_prompt = self._build_generation_prompt(prompt, max_length, tone, style)
+            logger.debug("Sending direct prompt to LLM", extra={
+                'context': {
+                    'prompt': complete_prompt,
+                    'component': 'content_generator.direct_prompt'
+                }
+            })
+            response = self.llm.complete(complete_prompt)
+            logger.info("Direct prompt completed successfully", extra={
+                'context': {
+                    'component': 'content_generator.direct_prompt'
+                }
+            })
+            return response.text
+        except Exception as e:
+            logger.error(f"Error in generate_post: {str(e)}", exc_info=True, extra={
+                'context': {
+                    'component': 'content_generator.direct_prompt'
+                }
+            })
+            return None
+
     def direct_prompt(self, prompt: str) -> Optional[str]:
         """Send a prompt directly to the LLM without using RAG or vector database"""
         try:
