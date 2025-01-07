@@ -150,7 +150,7 @@ class TaskScheduler:
     async def _generate_and_post_content(self):
         """Generate and post content to all platforms"""
         # Generate content
-        content = self.content_generator.generate_post(
+        content = await self.content_generator.generate_post(
             "Create an engaging social media post about technology trends",
             tone="professional",
             style="informative"
@@ -241,9 +241,9 @@ class TaskScheduler:
         """
         try:
             if platform == Platform.TWITTER:
-                self.twitter_client.post_content(content)
+                await self.twitter_client.post_content(content)
             else:  # Bluesky
-                self.bluesky_client.post_content(content)
+                await self.bluesky_client.post_content(content)
                 
             return "post_id"  # Replace with actual post ID from response
             

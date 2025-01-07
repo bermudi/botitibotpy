@@ -89,12 +89,9 @@ class TestTaskScheduler(unittest.IsolatedAsyncioTestCase):
     async def test_start_scheduled_tasks(self, mock_reply, mock_metrics, mock_content):
         """Test starting scheduled tasks"""
         # Arrange
-        async def mock_coro():
-            pass
-
-        mock_reply.return_value = mock_coro()
-        mock_metrics.return_value = mock_coro()
-        mock_content.return_value = mock_coro()
+        mock_reply.return_value = AsyncMock()()
+        mock_metrics.return_value = AsyncMock()()
+        mock_content.return_value = AsyncMock()()
 
         # Act
         await self.task_scheduler.start()
@@ -109,6 +106,8 @@ class TestTaskScheduler(unittest.IsolatedAsyncioTestCase):
         """Test content generation scheduling"""
         # Arrange
         self.task_scheduler.content_generator.generate_post = AsyncMock(return_value="Test post")
+        self.task_scheduler.twitter_client.post_content = AsyncMock()
+        self.task_scheduler.bluesky_client.post_content = AsyncMock()
 
         # Act
         task = asyncio.create_task(self.task_scheduler._schedule_content_generation())
@@ -125,6 +124,8 @@ class TestTaskScheduler(unittest.IsolatedAsyncioTestCase):
 
         # Assert
         self.task_scheduler.content_generator.generate_post.assert_called_once()
+        self.task_scheduler.twitter_client.post_content.assert_called_once_with("Test post")
+        self.task_scheduler.bluesky_client.post_content.assert_called_once_with("Test post")
 
     async def test_schedule_reply_checking(self):
         """Test reply checking scheduling"""
