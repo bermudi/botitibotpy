@@ -64,6 +64,38 @@ This directory contains files for database interaction:
     -   Updating engagement metrics using `update_engagement_metrics`.
     -   Creating, retrieving, and marking comments as replied using methods like `create_comment`, `get_unreplied_comments`, and `mark_comment_replied`.
 
+### `src/logging/`
+
+This directory contains the application's comprehensive logging system:
+
+-   **Core Logging Features**:
+    -   Structured JSON logging for machine readability
+    -   Log rotation (10MB files with 5 backups)
+    -   Component-specific loggers with configurable log levels
+    -   Console output for development with human-readable format
+    -   File output with JSON format for machine processing
+    -   Detailed function call logging with parameters and results
+    -   Exception tracking with full stack traces
+
+-   **Configuration**:
+    -   Log levels configurable via environment variables:
+        -   `LOG_LEVEL`: Default log level for all components
+        -   Component-specific levels: `CONTENT_LOG_LEVEL`, `SOCIAL_LOG_LEVEL`, `SCHEDULER_LOG_LEVEL`, `DATABASE_LOG_LEVEL`
+    -   Log directory configuration in `Config.LOG_DIR`
+    -   Application name configuration in `Config.APP_NAME`
+
+-   **Key Components**:
+    -   `JSONFormatter`: Custom formatter for structured JSON log output
+    -   `setup_logging`: Initializes the logging system with file and console handlers
+    -   `log_function_call`: Decorator for automatic function call logging
+    -   Component-specific loggers for granular control
+
+-   **Integration**:
+    -   Integrated with all major components (content, social, scheduler, database)
+    -   Automatic logging of application startup and shutdown
+    -   Error tracking across all components
+    -   Performance monitoring through function call logging
+
 ### `src/scheduler/`
 
 This directory contains files for scheduling and managing tasks:
@@ -110,4 +142,4 @@ This directory contains files for interacting with social media platforms:
 
 ## Overall Architecture
 
-The project uses a modular design, separating concerns into distinct components. The `content` module handles content loading and generation, the `database` module manages data persistence, the `scheduler` module handles task scheduling and execution, and the `social` module interacts with social media platforms. The `config` module provides configuration settings for the entire project.
+The project uses a modular design, separating concerns into distinct components. The `content` module handles content loading and generation, the `database` module manages data persistence, the `scheduler` module handles task scheduling and execution, the `social` module interacts with social media platforms, and the `logging` module provides a comprehensive logging system. The `config` module provides configuration settings for the entire project.

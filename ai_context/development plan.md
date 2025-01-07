@@ -58,10 +58,6 @@
   - [x] Database operations for CRUD operations (DatabaseOperations class)
 
 ### Phase 5: Scheduling & Automation
-- [ ] Comprehensive Logging System
-  - [ ] Implement structured logging
-  - [ ] Log rotation and management
-  - [ ] Different log levels for various parts of the system
 - [x] Task Scheduler
   - [x] Content generation scheduling (60-minute intervals)
   - [x] Posting schedule management
@@ -78,10 +74,14 @@
   - [x] Rate limit handling
   - [x] Platform-specific error handling
   - [x] Maximum retry limits and status tracking
-- [ ] Monitoring
-  - [ ] Task health monitoring
-  - [ ] Performance monitoring
-  - [ ] Resource usage tracking
+
+
+### Phase 5a: Logging & Monitoring
+- [ ] Comprehensive Logging System
+  - [ ] Implement structured logging
+  - [ ] Log rotation and management
+  - [ ] Detailed task logging
+  - [ ] Configurable logging levels for different parts of the system at runtime
 
 ### Phase 6: CLI Implementation
 - [ ] Core CLI Framework
@@ -176,6 +176,12 @@
   - [ ] Smart timing optimization
   - [ ] Platform-specific scheduling
   - [ ] Content calendar management
+- [ ] Advanced monitoring
+  - [ ] Task health monitoring
+  - [ ] Performance monitoring
+  - [ ] Resource usage tracking
+  - [ ] System health monitoring
+
 
 ## Current Status
 - Completed basic infrastructure and social media integration
@@ -189,4 +195,3 @@
 2. Begin API implementation with FastAPI
 3. Implement WebSocket support for real-time updates
 4. Develop comprehensive testing suite
-
