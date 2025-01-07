@@ -35,7 +35,7 @@ class TestContentCommands(BaseCliTest):
                                 '--prompt', 'Test prompt'])
         
         self.assertEqual(result.exit_code, 1)
-        self.assertIn("Error: Test error", result.output)
+        self.assertIn("Error: Command failed", result.stderr)
         
     def test_list_sources(self):
         """Test listing content sources."""

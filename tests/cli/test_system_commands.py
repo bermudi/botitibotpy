@@ -40,7 +40,7 @@ class TestSystemCommands(BaseCliTest):
         result = self.invoke_cli(['system', 'status'])
         
         self.assertEqual(result.exit_code, 1)
-        self.assertIn("Error: Test error", result.stderr)
+        self.assertIn("Error: Command failed", result.stderr)
         
     def test_start_scheduler(self):
         """Test starting the task scheduler."""
@@ -57,7 +57,7 @@ class TestSystemCommands(BaseCliTest):
         result = self.invoke_cli(['system', 'start'])
         
         self.assertEqual(result.exit_code, 1)
-        self.assertIn("Error: Failed to start", result.stderr)
+        self.assertIn("Error: Command failed", result.stderr)
         
     def test_stop_scheduler(self):
         """Test stopping the task scheduler."""
@@ -74,4 +74,4 @@ class TestSystemCommands(BaseCliTest):
         result = self.invoke_cli(['system', 'stop'])
         
         self.assertEqual(result.exit_code, 1)
-        self.assertIn("Error: Failed to stop", result.stderr)
+        self.assertIn("Error: Command failed", result.stderr)

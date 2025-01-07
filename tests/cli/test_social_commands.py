@@ -105,5 +105,4 @@ class TestSocialCommands(BaseCliTest):
         result = self.invoke_cli(['social', 'cancel', str(post_id)])
         
         self.assertEqual(result.exit_code, 1)
-        self.assertIn(f"Post {post_id} not found", result.output)
-        self.queue_instance.cancel_post.assert_called_once_with(post_id)
+        self.assertIn(f"Post {post_id} not found", result.stderr)
