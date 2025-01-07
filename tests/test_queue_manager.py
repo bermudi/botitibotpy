@@ -199,8 +199,8 @@ class TestQueueManager(unittest.IsolatedAsyncioTestCase):
 
         # Act
         await self.queue_manager.add_task(task)
-        await asyncio.sleep(0.5)  # Allow time for retry
-
+        await asyncio.sleep(4.0)  # Allow time for all retries to complete
+    
         # Assert
         task_status = self.queue_manager.get_task_status("fail_task")
         self.assertEqual(task_status['status'], 'failed')
