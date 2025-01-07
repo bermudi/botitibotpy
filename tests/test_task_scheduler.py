@@ -23,6 +23,10 @@ class TestTaskScheduler(unittest.IsolatedAsyncioTestCase):
             metrics_update_interval=5,
             max_concurrent_tasks=3
         )
+        # Ensure Twitter is explicitly enabled for tests
+        self.config.twitter.enabled = True
+        self.config.bluesky.enabled = True
+        
         self.task_scheduler = TaskScheduler(self.mock_db, config=self.config)
         self.task_scheduler.db_ops = self.mock_db
         self.task_scheduler.content_generator.generate_post = AsyncMock(return_value="Generated post")
