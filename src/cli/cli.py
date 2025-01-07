@@ -2,9 +2,11 @@
 Main CLI implementation for Botitibot.
 """
 
+import sys
 import click
 import logging
 from pathlib import Path
+from datetime import datetime
 from typing import Optional
 
 from ..config import Config
@@ -13,6 +15,8 @@ from ..database.operations import DatabaseOperations
 from ..scheduler.task_scheduler import TaskScheduler
 from ..scheduler.queue_manager import QueueManager
 from ..monitoring import MonitoringSystem
+from ..social.twitter import TwitterClient
+from ..social.bluesky import BlueskyClient
 
 logger = logging.getLogger(__name__)
 
@@ -36,11 +40,136 @@ def generate(prompt: str, length: str, tone: str) -> None:
     """Generate content manually using specified parameters"""
     try:
         generator = ContentGenerator()
-        content = generator.generate(prompt, length=length, tone=tone)
-        click.echo(f"Generated content:\n{content}")
+        content = generator.generate_post(prompt, max_length=None, tone=tone)
+        if content:
+            click.echo(f"Generated content:\n{content}")
+        else:
+            click.echo("Failed to generate content", err=True)
+            sys.exit(1)
     except Exception as e:
         logger.error(f"Error generating content: {e}")
         click.echo(f"Error: {str(e)}", err=True)
+        sys.exit(1)
+
+@content.command(name='list-sources')
+def list_sources() -> None:
+    """List available content sources"""
+    try:
+        generator = ContentGenerator()
+        sources = generator.list_sources()
+        if sources:
+            click.echo("\nContent Sources:")
+            for source in sources:
+                click.echo(f"- {source}")
+        else:
+            click.echo("No content sources found")
+    except Exception as e:
+        logger.error(f"Error listing sources: {e}")
+        click.echo(f"Error: {str(e)}", err=True)
+        sys.exit(1)
+
+@content.command(name='update-index')
+@click.option('--dry-run', is_flag=True, help='Show what would be updated without making changes')
+def update_index(dry_run: bool) -> None:
+    """Update content source index"""
+    try:
+        generator = ContentGenerator()
+        changes = generator.update_index(dry_run=dry_run)
+        if changes:
+            click.echo("\nIndex Changes:")
+            for change in changes:
+                click.echo(f"- {change}")
+        else:
+            click.echo("No changes to index")
+    except Exception as e:
+        logger.error(f"Error updating index: {e}")
+        click.echo(f"Error: {str(e)}", err=True)
+        sys.exit(1)
+
+@main.group()
+def social():
+    """Social media management commands"""
+    pass
+
+@social.command()
+@click.argument('platform', type=click.Choice(['twitter', 'bluesky']))
+def auth(platform: str) -> None:
+    """Authenticate with a social media platform"""
+    try:
+        if platform == 'twitter':
+            client = TwitterClient()
+            click.echo("Successfully authenticated with twitter")
+        else:
+            client = BlueskyClient()
+            click.echo("Successfully authenticated with bluesky")
+    except Exception as e:
+        logger.error(f"Error authenticating with {platform}: {e}")
+        click.echo(f"Error: {str(e)}", err=True)
+        sys.exit(1)
+
+@social.command()
+@click.argument('platform', type=click.Choice(['twitter', 'bluesky']))
+@click.argument('content')
+@click.option('--schedule', '-s', help='Schedule time (YYYY-MM-DD HH:MM:SS)')
+def post(platform: str, content: str, schedule: Optional[str] = None) -> None:
+    """Post content to a social media platform"""
+    try:
+        db = DatabaseOperations()
+        if schedule:
+            scheduled_time = datetime.strptime(schedule, "%Y-%m-%d %H:%M:%S")
+            db.add_post(platform=platform, content=content, scheduled_time=scheduled_time)
+            click.echo(f"Post scheduled for {schedule}")
+        else:
+            if platform == 'twitter':
+                client = TwitterClient()
+                post_id = client.post(content)
+                db.add_post(platform=platform, content=content, post_id=post_id)
+            else:
+                client = BlueskyClient()
+                post_id = client.post(content)
+                db.add_post(platform=platform, content=content, post_id=post_id)
+            click.echo(f"Post created successfully on {platform}")
+    except Exception as e:
+        logger.error(f"Error posting to {platform}: {e}")
+        click.echo(f"Error: {str(e)}", err=True)
+        sys.exit(1)
+
+@social.command(name='list-scheduled')
+def list_scheduled_posts() -> None:
+    """List all scheduled posts"""
+    try:
+        db = DatabaseOperations()
+        posts = db.get_scheduled_posts()
+        if posts:
+            click.echo("\nScheduled Posts:")
+            for post in posts:
+                click.echo(f"\nPlatform: {post.platform}")
+                click.echo(f"Scheduled: {post.scheduled_time}")
+                click.echo(f"Content: {post.content}")
+        else:
+            click.echo("No scheduled posts found")
+    except Exception as e:
+        logger.error(f"Error listing scheduled posts: {e}")
+        click.echo(f"Error: {str(e)}", err=True)
+        sys.exit(1)
+
+@social.command()
+@click.argument('post_id', type=int)
+def cancel(post_id: int) -> None:
+    """Cancel a scheduled post"""
+    try:
+        db = DatabaseOperations()
+        post = db.get_post(post_id)
+        if post:
+            db.delete_post(post_id)
+            click.echo(f"Post {post_id} canceled successfully")
+        else:
+            click.echo(f"Post {post_id} not found", err=True)
+            sys.exit(1)
+    except Exception as e:
+        logger.error(f"Error canceling post: {e}")
+        click.echo(f"Error: {str(e)}", err=True)
+        sys.exit(1)
 
 @main.group()
 def system():
@@ -62,6 +191,7 @@ def status():
     except Exception as e:
         logger.error(f"Error getting system status: {e}")
         click.echo(f"Error: {str(e)}", err=True)
+        sys.exit(1)
 
 @system.command()
 def start():
@@ -73,6 +203,7 @@ def start():
     except Exception as e:
         logger.error(f"Error starting scheduler: {e}")
         click.echo(f"Error: {str(e)}", err=True)
+        sys.exit(1)
 
 @system.command()
 def stop():
@@ -84,6 +215,7 @@ def stop():
     except Exception as e:
         logger.error(f"Error stopping scheduler: {e}")
         click.echo(f"Error: {str(e)}", err=True)
+        sys.exit(1)
 
 if __name__ == '__main__':
     main()
