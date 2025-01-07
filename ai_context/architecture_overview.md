@@ -108,11 +108,15 @@ This file implements a comprehensive monitoring system for tracking system resou
 
 This directory contains files for scheduling and managing tasks:
 
--   `exceptions.py`: Defines custom exceptions, such as `RateLimitError`, which includes a `retry_after` attribute.
+-   `exceptions.py`: Defines custom exceptions, such as `RateLimitError`, which includes:
+    -   Operation type ("auth", "write", "read")
+    -   Backoff time in seconds
+    -   Error message
 -   `queue_manager.py`: Manages a priority queue of tasks using `heapq`, including:
     -   Task prioritization with `HIGH`, `MEDIUM`, and `LOW` priorities using `TaskPriority` enum
     -   Concurrent task execution with configurable limits using `asyncio.Semaphore`
-    -   Rate limit handling with exponential backoff and retry using `RateLimitError`
+    -   Operation-specific rate limit tracking
+    -   Rate limit status checking and delay calculation
     -   Task cancellation and cleanup using `cancel_task`
     -   Queue status monitoring using `get_queue_status`
     -   Resource management with semaphores
@@ -127,6 +131,10 @@ This directory contains files for scheduling and managing tasks:
     -   Schedules content generation using `_schedule_content_generation`
     -   Schedules reply checking using `_schedule_reply_checking`
     -   Schedules metrics collection using `_schedule_metrics_collection`
+    -   Adaptive task scheduling based on rate limits:
+        -   Interval adjustment for rate-limited operations
+        -   Gradual interval reduction on success
+        -   Operation-specific backoff handling
 
 ### `src/cli/`
 
@@ -164,14 +172,16 @@ This directory contains platform-specific clients:
     -   Comprehensive error handling and logging
     -   Platform-specific API adaptations
     -   Provides methods for posting content (`post_content`), fetching timeline (`get_timeline`), fetching tweet threads (`get_tweet_thread`), liking tweets (`like_tweet`), replying to tweets (`reply_to_tweet`), and fetching author feed (`get_author_feed`)
--   `bluesky.py`: Bluesky client using `atproto` (Needs Updates):
+-   `bluesky.py`: Bluesky client using `atproto`:
     -   Context manager-based resource management using context manager
     -   Structured logging for operations
     -   Support for posts with links
     -   Timeline and thread retrieval
-    -   Missing functionality:
-        -   Post method implementation
-        -   Proper error handling for async operations
+    -   Simplified rate limiting with operation-specific buckets:
+        -   Separate buckets for "auth", "write", and "read" operations
+        -   Local rate limit tracking with reserved capacity
+        -   Graceful degradation with shorter backoff times
+        -   Rate limit error propagation with operation type and backoff info
     -   Provides methods for fetching timeline (`get_timeline`), fetching post threads (`get_post_thread`), liking posts (`like_post`), and replying to posts (`reply_to_post`)
 
 ## Overall Architecture

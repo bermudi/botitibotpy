@@ -64,7 +64,7 @@
   - [x] Database operations for CRUD operations (DatabaseOperations class)
 
 ### Phase 5: Scheduling & Automation
-- [ ] Task Scheduler
+- [x] Task Scheduler
   - [x] Content generation scheduling (60-minute intervals)
   - [x] Posting schedule management
   - [x] Reply checking automation (5-minute intervals)
@@ -72,23 +72,27 @@
   - [x] Configurable scheduling intervals
   - [x] Task queue management (QueueManager class)
   - [x] Task scheduling for content generation, reply checking, and metrics collection (TaskScheduler class)
-  - [ ] Fix async/event loop handling in CLI commands
-  - [ ] Proper error handling for scheduling operations
+  - [x] Fix async/event loop handling in CLI commands
+  - [x] Proper error handling for scheduling operations
 - [x] Metrics Collection
   - [x] Basic engagement tracking
   - [x] Automated collection (10-minute intervals)
 - [x] Error Recovery
   - [x] Failed task retry mechanism with exponential backoff
   - [x] Rate limit handling
+    - [x] Operation-specific rate limit buckets (auth, write, read)
+    - [x] Local rate limit tracking with reserved capacity
+    - [x] Graceful degradation with shorter backoff times
+    - [x] Adaptive task scheduling based on rate limits
   - [x] Platform-specific error handling
   - [x] Maximum retry limits and status tracking
-
 
 ### Phase 5a: Logging & Monitoring
 - [x] Comprehensive Logging System
   - [x] Implement structured logging for social media clients
     - [x] Twitter client logging (authentication, posting, timeline fetching, etc.)
     - [x] Bluesky client logging (authentication, posting, timeline fetching, etc.)
+    - [x] Rate limit and backoff logging
   - [x] Implement structured logging for content generation
     - [x] Content generator logging (initialization, indexing, document processing)
     - [x] LLM operations logging (prompts, queries, responses)
@@ -97,6 +101,7 @@
   - [x] Implement structured logging for task scheduling
     - [x] Task scheduler logging (task creation, execution, completion)
     - [x] Queue manager logging (queue operations, task status changes)
+    - [x] Rate limit and backoff status logging
   - [x] Implement structured logging for remaining components
     - [x] Database operations logging (CRUD operations, migrations)
     - [x] Web parser and RSS reader logging (integrated in content generator)
@@ -116,6 +121,7 @@
     - [x] Performance metrics tracking
     - [x] Resource usage alerts (CPU, memory, disk)
     - [x] Custom alert conditions with cooldown
+    - [x] Rate limit monitoring and alerts
 
 ### Phase 6: CLI Implementation
 - [x] Core CLI Framework

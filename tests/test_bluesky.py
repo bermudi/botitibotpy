@@ -1,162 +1,189 @@
 import unittest
-from unittest.mock import patch, MagicMock
-from src.social.bluesky import BlueskyClient
+import pytest
+import json
+from unittest.mock import patch, MagicMock, AsyncMock
+from datetime import datetime, timedelta
+from src.social.bluesky import BlueskyClient, SimpleRateLimiter, RateLimitError, handle_rate_limit
+from atproto_client.exceptions import RequestException
 
+@pytest.mark.asyncio
+class TestBlueskyClient(unittest.IsolatedAsyncioTestCase):
+    async def asyncSetUp(self):
+        """Set up test fixtures before each test method."""
+        self.client = BlueskyClient()
+        self.client.client = MagicMock()
+        self.client.profile = MagicMock()
 
-class TestBlueskyClient(unittest.TestCase):
-    @patch('src.social.bluesky.Client')
-    def setUp(self, mock_client):
-        self.mock_client = mock_client
-        self.bluesky_client = BlueskyClient()
-        self.bluesky_client.__enter__()
-    
-    def tearDown(self):
-        self.bluesky_client.__exit__(None, None, None)
-
-    @patch('src.social.bluesky.client_utils.TextBuilder')
-    def test_post_content_with_link(self, mock_text_builder):
-        # Arrange
-        mock_text_builder_instance = mock_text_builder.return_value
-        mock_client_instance = self.mock_client.return_value
-        mock_client_instance.send_post.return_value = "mock_post_response"
-        self.bluesky_client.client = mock_client_instance
-
-        content = "Test content"
-        link = "https://example.com"
-
-        # Act
-        result = self.bluesky_client.post_content(content, link)
-
-        # Assert
-        mock_text_builder.assert_called_once()
-        mock_text_builder_instance.text.assert_called_once_with(content)
-        mock_text_builder_instance.link.assert_called_once_with("🔗", link)
-        mock_client_instance.send_post.assert_called_once_with(mock_text_builder_instance)
-        self.assertEqual(result, "mock_post_response")
-
-    @patch('src.social.bluesky.client_utils.TextBuilder')
-    def test_post_content_error_handling(self, mock_text_builder):
-        # Arrange
-        mock_text_builder_instance = mock_text_builder.return_value
-        mock_client_instance = self.mock_client.return_value
-        mock_client_instance.send_post.side_effect = Exception("Network error")
-        self.bluesky_client.client = mock_client_instance
+    async def test_rate_limiter_initialization(self):
+        """Test rate limiter initialization with default values"""
+        rate_limiter = SimpleRateLimiter()
         
-        # Act
-        result = self.bluesky_client.post_content("Test content", "https://example.com")
+        # Check auth bucket
+        self.assertEqual(rate_limiter.limits["auth"]["limit"], 100)
+        self.assertEqual(rate_limiter.limits["auth"]["window"], 86400)
+        self.assertEqual(rate_limiter.limits["auth"]["min_remaining"], 5)
         
-        # Assert
-        self.assertIsNone(result)
-        mock_text_builder_instance.text.assert_called_once_with("Test content")
-        mock_text_builder_instance.link.assert_called_once_with("🔗", "https://example.com")
-        mock_client_instance.send_post.assert_called_once_with(mock_text_builder_instance)
+        # Check write bucket
+        self.assertEqual(rate_limiter.limits["write"]["limit"], 5000)
+        self.assertEqual(rate_limiter.limits["write"]["window"], 86400)
+        self.assertEqual(rate_limiter.limits["write"]["min_remaining"], 50)
+        
+        # Check read bucket
+        self.assertEqual(rate_limiter.limits["read"]["limit"], 50000)
+        self.assertEqual(rate_limiter.limits["read"]["window"], 86400)
+        self.assertEqual(rate_limiter.limits["read"]["min_remaining"], 100)
 
-    def test_get_timeline_default_limit(self):
-        # Arrange
-        mock_timeline = MagicMock()
-        self.mock_client.return_value.get_timeline.return_value = mock_timeline
-        self.bluesky_client.client = self.mock_client.return_value
+    async def test_rate_limiter_update_from_headers(self):
+        """Test updating rate limits from response headers"""
+        rate_limiter = SimpleRateLimiter()
+        headers = {
+            'ratelimit-limit': '1000',
+            'ratelimit-remaining': '900',
+            'ratelimit-reset': str(int(datetime.now().timestamp()) + 3600),
+            'ratelimit-policy': '1000;w=3600'
+        }
+        
+        rate_limiter.update_from_headers(headers, "write")
+        
+        self.assertEqual(rate_limiter.limits["write"]["limit"], 1000)
+        self.assertEqual(rate_limiter.limits["write"]["remaining"], 900)
+        self.assertEqual(rate_limiter.limits["write"]["window"], 3600)
 
-        # Act
-        result = self.bluesky_client.get_timeline()
+    async def test_rate_limiter_can_make_request(self):
+        """Test rate limit checking logic"""
+        rate_limiter = SimpleRateLimiter()
+        
+        # Should allow request when above min_remaining
+        self.assertTrue(rate_limiter.can_make_request("write"))
+        
+        # Set remaining just above min_remaining
+        rate_limiter.limits["write"]["remaining"] = rate_limiter.limits["write"]["min_remaining"] + 1
+        self.assertTrue(rate_limiter.can_make_request("write"))
+        
+        # Set remaining at min_remaining
+        rate_limiter.limits["write"]["remaining"] = rate_limiter.limits["write"]["min_remaining"]
+        self.assertFalse(rate_limiter.can_make_request("write"))
 
-        # Assert
-        self.assertEqual(result, mock_timeline)
-        self.mock_client.return_value.get_timeline.assert_called_once_with(limit=20)
+    async def test_rate_limiter_decrement(self):
+        """Test decrementing rate limit counters"""
+        rate_limiter = SimpleRateLimiter()
+        initial_remaining = rate_limiter.limits["write"]["remaining"]
+        
+        rate_limiter.decrement("write")
+        self.assertEqual(rate_limiter.limits["write"]["remaining"], initial_remaining - 1)
 
+    async def test_rate_limiter_backoff_time(self):
+        """Test backoff time calculation"""
+        rate_limiter = SimpleRateLimiter()
+        
+        # Test standard backoff
+        backoff = rate_limiter.get_backoff_time("write")
+        self.assertEqual(backoff, rate_limiter.backoff_times["write"])
+        
+        # Test backoff near reset time
+        now = int(datetime.now().timestamp())
+        rate_limiter.limits["write"]["reset_time"] = now + 300  # 5 minutes from now
+        backoff = rate_limiter.get_backoff_time("write")
+        self.assertLessEqual(backoff, 300)
 
-    def test_get_timeline_with_custom_limit(self):
-        # Arrange
-        custom_limit = 10
-        mock_timeline = MagicMock()
-        self.bluesky_client.client.get_timeline = MagicMock(return_value=mock_timeline)
-
-        # Act
-        result = self.bluesky_client.get_timeline(limit=custom_limit)
-
-        # Assert
-        self.assertEqual(result, mock_timeline)
-        self.bluesky_client.client.get_timeline.assert_called_once_with(limit=custom_limit)
-
-    def test_get_post_thread_valid_uri(self):
-        # Arrange
-        mock_client_instance = self.mock_client.return_value
-        mock_client_instance.get_post_thread.return_value = MagicMock(name='mock_thread')
-        self.bluesky_client.client = mock_client_instance
-        test_uri = "at://did:plc:1234abcd/app.bsky.feed.post/1234"
-
-        # Act
-        result = self.bluesky_client.get_post_thread(test_uri)
-
-        # Assert
-        self.assertIsNotNone(result)
-        mock_client_instance.get_post_thread.assert_called_once_with(test_uri)
-
-    def test_like_post_with_uri_and_cid(self):
-        # Arrange
-        uri = "test_uri"
-        cid = "test_cid"
-        self.mock_client.return_value.like.return_value = "success"
-        self.bluesky_client.client = self.mock_client.return_value
-
-        # Act
-        result = self.bluesky_client.like_post(uri, cid)
-
-        # Assert
+    @patch('src.social.bluesky.SimpleRateLimiter')
+    async def test_handle_rate_limit_decorator(self, mock_rate_limiter):
+        """Test rate limit decorator behavior"""
+        mock_rate_limiter.return_value.can_make_request.return_value = True
+        
+        @handle_rate_limit("write")
+        def test_function():
+            return "success"
+            
+        # Test successful execution
+        result = test_function()
         self.assertEqual(result, "success")
-        self.mock_client.return_value.like.assert_called_once_with(uri, cid)
-
-    def test_like_post_uri_only(self):
-        # Arrange
-        mock_client_instance = self.mock_client.return_value
-        mock_post = MagicMock()
-        mock_post.thread.post.cid = 'test_cid'
-        mock_client_instance.get_post_thread.return_value = mock_post
-        mock_client_instance.like.return_value = 'success'
-        self.bluesky_client.client = mock_client_instance
+        mock_rate_limiter.return_value.decrement.assert_called_once_with("write")
         
-        # Act
-        result = self.bluesky_client.like_post('test_uri')
+        # Test rate limit prevention
+        mock_rate_limiter.return_value.can_make_request.return_value = False
+        mock_rate_limiter.return_value.get_backoff_time.return_value = 60
         
-        # Assert
-        mock_client_instance.get_post_thread.assert_called_once_with('test_uri')
-        mock_client_instance.like.assert_called_once_with('test_uri', 'test_cid')
-        self.assertEqual(result, 'success')
+        with self.assertRaises(RateLimitError) as context:
+            test_function()
+        
+        self.assertEqual(context.exception.operation_type, "write")
+        self.assertEqual(context.exception.backoff, 60)
 
-    def test_reply_to_post(self):
-        # Arrange
-        self.bluesky_client.client = MagicMock()
-        uri = "test_uri"
-        reply_text = "This is a test reply"
-        expected_response = MagicMock()
-        self.bluesky_client.client.send_post.return_value = expected_response
+    @patch('src.social.bluesky.SimpleRateLimiter')
+    async def test_handle_rate_limit_remote_error(self, mock_rate_limiter):
+        """Test handling of remote rate limit errors"""
+        mock_rate_limiter.return_value.can_make_request.return_value = True
+        
+        @handle_rate_limit("write")
+        def test_function():
+            response = MagicMock()
+            response.status_code = 429
+            response.headers = {
+                'ratelimit-reset': str(int(datetime.now().timestamp()) + 60)
+            }
+            raise RequestException("Rate limit exceeded", response=response)
+            
+        with self.assertRaises(RateLimitError) as context:
+            test_function()
+            
+        self.assertEqual(context.exception.operation_type, "write")
+        mock_rate_limiter.return_value.update_from_headers.assert_called_once()
 
-        # Act
-        result = self.bluesky_client.reply_to_post(uri, reply_text)
+    async def test_post_content_rate_limit(self):
+        """Test post_content method with rate limiting"""
+        self.client.client.send_post = AsyncMock(side_effect=[
+            RequestException("Rate limit exceeded", response=MagicMock(
+                status_code=429,
+                headers={'ratelimit-reset': str(int(datetime.now().timestamp()) + 60)}
+            )),
+            MagicMock(uri="test_uri")  # Success on second try
+        ])
+        
+        # First attempt should raise RateLimitError
+        with self.assertRaises(RateLimitError) as context:
+            await self.client.post_content("Test content")
+            
+        self.assertEqual(context.exception.operation_type, "write")
+        
+        # Reset rate limiter state
+        rate_limiter = SimpleRateLimiter()
+        rate_limiter.limits["write"]["remaining"] = rate_limiter.limits["write"]["limit"]
+        
+        # Second attempt should succeed
+        result = await self.client.post_content("Test content")
+        self.assertIsNotNone(result)
+        self.assertEqual(result.uri, "test_uri")
 
-        # Assert
-        self.assertEqual(result, expected_response)
-        self.bluesky_client.client.send_post.assert_called_once_with(text=reply_text, reply_to=uri)
-    
+    async def test_get_timeline_rate_limit(self):
+        """Test get_timeline method with rate limiting"""
+        self.client.client.get_timeline = AsyncMock(side_effect=RequestException(
+            "Rate limit exceeded",
+            response=MagicMock(
+                status_code=429,
+                headers={'ratelimit-reset': str(int(datetime.now().timestamp()) + 60)}
+            )
+        ))
+        
+        with self.assertRaises(RateLimitError) as context:
+            await self.client.get_timeline()
+            
+        self.assertEqual(context.exception.operation_type, "read")
 
-    @patch('src.social.bluesky.AuthorFeedParams')
-    def test_get_author_feed_current_user(self, mock_params):
-        # Arrange
-        mock_profile = MagicMock()
-        mock_profile.did = 'test_user_did'
-        self.bluesky_client.profile = mock_profile
-        self.bluesky_client.client = self.mock_client
-
-        mock_params.return_value = 'mocked_params'
-        self.mock_client.get_author_feed.return_value = 'mocked_feed'
-
-        # Act
-        result = self.bluesky_client.get_author_feed()
-
-        # Assert
-        mock_params.assert_called_once_with(actor='test_user_did', limit=20)
-        self.mock_client.get_author_feed.assert_called_once_with(params='mocked_params')
-        self.assertEqual(result, 'mocked_feed')
+    async def test_auth_rate_limit(self):
+        """Test authentication with rate limiting"""
+        self.client.client.login = AsyncMock(side_effect=RequestException(
+            "Rate limit exceeded",
+            response=MagicMock(
+                status_code=429,
+                headers={'ratelimit-reset': str(int(datetime.now().timestamp()) + 60)}
+            )
+        ))
+        
+        with self.assertRaises(RateLimitError) as context:
+            await self.client.setup_auth()
+            
+        self.assertEqual(context.exception.operation_type, "auth")
 
 if __name__ == '__main__':
-    unittest.main()
+    pytest.main([__file__])

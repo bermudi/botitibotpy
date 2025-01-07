@@ -304,5 +304,119 @@ class TestTaskScheduler(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(mock_task2.cancelled())
         self.assertTrue(mock_task3.cancelled())
 
+    async def test_adaptive_scheduling_write_rate_limit(self):
+        """Test adaptive scheduling when write operations are rate limited"""
+        # Arrange
+        error = RateLimitError("Rate limited", operation_type="write", backoff=60)
+        original_interval = self.task_scheduler.intervals['content_generation']
+        
+        # Act
+        handled = await self.task_scheduler._handle_platform_error('twitter', error)
+        
+        # Assert
+        self.assertTrue(handled)
+        self.assertEqual(self.task_scheduler.intervals['content_generation'], 
+                        min(original_interval * 2, 120))  # Doubled but capped at 2 hours
+
+    async def test_adaptive_scheduling_read_rate_limit(self):
+        """Test adaptive scheduling when read operations are rate limited"""
+        # Arrange
+        error = RateLimitError("Rate limited", operation_type="read", backoff=60)
+        original_reply_interval = self.task_scheduler.intervals['reply_check']
+        original_metrics_interval = self.task_scheduler.intervals['metrics_update']
+        
+        # Act
+        handled = await self.task_scheduler._handle_platform_error('twitter', error)
+        
+        # Assert
+        self.assertTrue(handled)
+        self.assertEqual(self.task_scheduler.intervals['reply_check'], 
+                        min(original_reply_interval * 2, 30))  # Doubled but capped at 30 minutes
+        self.assertEqual(self.task_scheduler.intervals['metrics_update'], 
+                        min(original_metrics_interval * 2, 60))  # Doubled but capped at 1 hour
+
+    async def test_interval_reduction_after_success(self):
+        """Test gradual interval reduction after successful operations"""
+        # Arrange
+        self.task_scheduler.intervals['content_generation'] = 120  # Start at max
+        self.task_scheduler.content_generator.generate_post = AsyncMock(return_value="Test post")
+        self.task_scheduler.twitter_client.post_content = AsyncMock()
+        self.task_scheduler.bluesky_client.post_content = AsyncMock()
+        
+        # Act
+        task = asyncio.create_task(self._schedule_content_generation())
+        try:
+            await asyncio.wait_for(asyncio.shield(task), timeout=0.1)
+        except asyncio.TimeoutError:
+            pass
+        finally:
+            task.cancel()
+            try:
+                await task
+            except asyncio.CancelledError:
+                pass
+        
+        # Assert
+        self.assertEqual(self.task_scheduler.intervals['content_generation'], 60)  # Reduced by half
+
+    async def test_skip_rate_limited_operations(self):
+        """Test skipping operations when rate limited"""
+        # Arrange
+        self.task_scheduler.queue_manager.is_rate_limited = MagicMock(return_value=True)
+        self.task_scheduler.queue_manager.get_rate_limit_delay = MagicMock(return_value=60)
+        self.task_scheduler._generate_and_post_content = AsyncMock()
+        
+        # Act
+        task = asyncio.create_task(self.task_scheduler._schedule_content_generation())
+        try:
+            await asyncio.wait_for(asyncio.shield(task), timeout=0.1)
+        except asyncio.TimeoutError:
+            pass
+        finally:
+            task.cancel()
+            try:
+                await task
+            except asyncio.CancelledError:
+                pass
+        
+        # Assert
+        self.task_scheduler._generate_and_post_content.assert_not_called()
+
+    async def test_rate_limit_error_propagation(self):
+        """Test rate limit error propagation through task scheduler"""
+        # Arrange
+        self.task_scheduler.twitter_client.post_content = AsyncMock(
+            side_effect=RateLimitError("Rate limited", "write", 60)
+        )
+        self.task_scheduler.content_generator.generate_post = AsyncMock(return_value="Test post")
+        
+        # Act
+        post_ids = await self.task_scheduler._generate_and_post_content()
+        
+        # Assert
+        self.assertIsNone(post_ids.get(Platform.TWITTER))
+        self.assertTrue(self.task_scheduler.queue_manager.is_rate_limited("write"))
+
+    async def test_platform_specific_rate_limits(self):
+        """Test handling platform-specific rate limits"""
+        # Arrange
+        self.task_scheduler.twitter_client.post_content = AsyncMock(
+            side_effect=RateLimitError("Twitter rate limit", "write", 60)
+        )
+        self.task_scheduler.bluesky_client.post_content = AsyncMock(
+            side_effect=RateLimitError("Bluesky rate limit", "write", 30)
+        )
+        self.task_scheduler.content_generator.generate_post = AsyncMock(return_value="Test post")
+        
+        # Act
+        post_ids = await self.task_scheduler._generate_and_post_content()
+        
+        # Assert
+        self.assertIsNone(post_ids.get(Platform.TWITTER))
+        self.assertIsNone(post_ids.get(Platform.BLUESKY))
+        self.assertTrue(self.task_scheduler.queue_manager.is_rate_limited("write"))
+        self.assertGreater(self.task_scheduler.intervals['content_generation'], 
+                          self.config.content_generation_interval)
+
 if __name__ == '__main__':
     pytest.main([__file__])

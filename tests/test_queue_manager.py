@@ -379,5 +379,135 @@ class TestQueueManager(unittest.IsolatedAsyncioTestCase):
         self.assertIn('Always fails', result['error'])
         self.assertEqual(result['retries'], 3)  # Initial try + 2 retries
 
+    async def test_rate_limit_tracking(self):
+        """Test operation-specific rate limit tracking"""
+        # Arrange
+        task_id = "rate_limited_task"
+        operation_type = "write"
+        backoff = 60
+        
+        async def failing_coroutine():
+            raise RateLimitError("Rate limited", operation_type=operation_type, backoff=backoff)
+            
+        task = Task(
+            id=task_id,
+            priority=TaskPriority.HIGH,
+            created_at=datetime.now(),
+            coroutine=failing_coroutine,
+            max_retries=1
+        )
+        
+        # Act
+        await self.queue_manager.add_task(task)
+        await asyncio.sleep(0.1)  # Let task execute
+        
+        # Assert
+        self.assertTrue(self.queue_manager.is_rate_limited(operation_type))
+        self.assertGreater(self.queue_manager.get_rate_limit_delay(operation_type), 0)
+        self.assertLessEqual(self.queue_manager.get_rate_limit_delay(operation_type), backoff)
+
+    async def test_multiple_operation_types(self):
+        """Test handling multiple operation types independently"""
+        # Arrange
+        write_task = Task(
+            id="write_task",
+            priority=TaskPriority.HIGH,
+            created_at=datetime.now(),
+            coroutine=lambda: RateLimitError("Write limited", "write", 60),
+            max_retries=1
+        )
+        
+        read_task = Task(
+            id="read_task",
+            priority=TaskPriority.HIGH,
+            created_at=datetime.now(),
+            coroutine=lambda: RateLimitError("Read limited", "read", 30),
+            max_retries=1
+        )
+        
+        # Act
+        await self.queue_manager.add_task(write_task)
+        await self.queue_manager.add_task(read_task)
+        await asyncio.sleep(0.1)  # Let tasks execute
+        
+        # Assert
+        self.assertTrue(self.queue_manager.is_rate_limited("write"))
+        self.assertTrue(self.queue_manager.is_rate_limited("read"))
+        self.assertGreater(self.queue_manager.get_rate_limit_delay("write"), 
+                          self.queue_manager.get_rate_limit_delay("read"))
+
+    async def test_rate_limit_expiry(self):
+        """Test rate limit expiry"""
+        # Arrange
+        operation_type = "write"
+        backoff = 1  # 1 second backoff for testing
+        
+        async def failing_coroutine():
+            raise RateLimitError("Rate limited", operation_type=operation_type, backoff=backoff)
+            
+        task = Task(
+            id="expiring_task",
+            priority=TaskPriority.HIGH,
+            created_at=datetime.now(),
+            coroutine=failing_coroutine,
+            max_retries=1
+        )
+        
+        # Act
+        await self.queue_manager.add_task(task)
+        await asyncio.sleep(0.1)  # Let task execute
+        
+        # Assert initial state
+        self.assertTrue(self.queue_manager.is_rate_limited(operation_type))
+        
+        # Wait for expiry
+        await asyncio.sleep(backoff + 0.1)
+        
+        # Assert expired state
+        self.assertFalse(self.queue_manager.is_rate_limited(operation_type))
+        self.assertEqual(self.queue_manager.get_rate_limit_delay(operation_type), 0)
+
+    async def test_rate_limit_task_rescheduling(self):
+        """Test task rescheduling after rate limit"""
+        # Arrange
+        attempts = 0
+        operation_type = "write"
+        backoff = 1  # 1 second backoff
+        
+        async def rate_limited_coroutine():
+            nonlocal attempts
+            attempts += 1
+            if attempts == 1:
+                raise RateLimitError("Rate limited", operation_type=operation_type, backoff=backoff)
+            return "success"
+            
+        task = Task(
+            id="reschedule_task",
+            priority=TaskPriority.HIGH,
+            created_at=datetime.now(),
+            coroutine=rate_limited_coroutine,
+            max_retries=2
+        )
+        
+        # Act
+        await self.queue_manager.add_task(task)
+        
+        # Wait for initial execution and rate limit
+        await asyncio.sleep(0.1)
+        
+        # Assert rate limited state
+        self.assertTrue(self.queue_manager.is_rate_limited(operation_type))
+        task_status = self.queue_manager.get_task_status("reschedule_task")
+        self.assertEqual(task_status['status'], 'rate_limited')
+        
+        # Wait for backoff and retry
+        await asyncio.sleep(backoff + 0.2)
+        
+        # Assert completion
+        task_status = self.queue_manager.get_task_status("reschedule_task")
+        self.assertEqual(task_status['status'], 'completed')
+        self.assertEqual(task_status['result'], 'success')
+        self.assertEqual(attempts, 2)
+
 if __name__ == '__main__':
     pytest.main([__file__])
