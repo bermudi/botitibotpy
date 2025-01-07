@@ -73,11 +73,23 @@ class TwitterClient:
                 with open(self.cookies_path, 'r') as f:
                     cookies = json.load(f)
                     logger.info("Successfully loaded existing cookies")
-                    self.client = self.client.get_client_from_cookies(cookies=cookies)
+                    # Update the client's cookies directly
+                    self.client.additional_cookies = cookies
                     return True
             except Exception as e:
                 logger.error(f"Error loading cookies: {str(e)}")
-                return False
+                # Don't return False here, try creating new cookies instead
+        
+        try:
+            # Try to create new cookies
+            cookies = self._create_new_cookies(self.cookies_path)
+            if cookies:
+                logger.info("Successfully created new cookies")
+                # Update the client's cookies directly
+                self.client.additional_cookies = cookies
+                return True
+        except Exception as e:
+            logger.error(f"Error creating new cookies: {str(e)}")
         
         return False
 

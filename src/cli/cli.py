@@ -206,11 +206,11 @@ def auth(platform):
                 else:
                     click.echo("Failed to authenticate with bluesky")
         elif platform == 'twitter':
-            with TwitterClient() as client:
-                if client.setup_auth():
-                    click.echo("Successfully authenticated with twitter")
-                else:
-                    click.echo("Failed to authenticate with twitter")
+            client = TwitterClient()
+            if client.setup_auth():
+                click.echo("Successfully authenticated with twitter")
+            else:
+                click.echo("Failed to authenticate with twitter")
     except Exception as e:
         click.echo(f"Error authenticating with {platform}: {str(e)}")
         sys.exit(1)
