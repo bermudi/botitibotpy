@@ -61,40 +61,26 @@ class TwitterClient:
         self.client.additional_browser_headers = {
             "sec-ch-ua-platform": '"Windows"',
         }
+        self.cookies_path = Path("twitter_cookie.json")
         self.setup_auth()
     
     def setup_auth(self) -> bool:
-        """Authenticate with Twitter using cookie-based authentication"""
-        cookie_path = Path("twitter_cookie.json")
-        try:
-            if cookie_path.exists():
-                cookies_dict = self._load_existing_cookies(cookie_path)
-                if cookies_dict:
-                    logger.info("Successfully loaded existing cookies", extra={
-                        'context': {
-                            'cookie_path': str(cookie_path),
-                            'component': 'twitter.auth'
-                        }
-                    })
+        """Set up authentication using saved cookies or create new ones."""
+        logger.debug("Setting up Twitter authentication")
+        
+        if self.cookies_path.exists():
+            try:
+                with open(self.cookies_path, 'r') as f:
+                    cookies = json.load(f)
+                    logger.info("Successfully loaded existing cookies")
+                    self.client = self.client.get_client_from_cookies(cookies=cookies)
                     return True
-            
-            logger.info("Creating new authentication cookies", extra={
-                'context': {
-                    'cookie_path': str(cookie_path),
-                    'component': 'twitter.auth'
-                }
-            })
-            return self._create_new_cookies(cookie_path)
-            
-        except Exception as e:
-            logger.error("Failed to set up authentication", exc_info=True, extra={
-                'context': {
-                    'error': str(e),
-                    'component': 'twitter.auth'
-                }
-            })
-            return False
-            
+            except Exception as e:
+                logger.error(f"Error loading cookies: {str(e)}")
+                return False
+        
+        return False
+
     def _load_existing_cookies(self, cookie_path: Path) -> Dict:
         """Load existing cookies from file"""
         logger.debug("Loading existing cookies", extra={

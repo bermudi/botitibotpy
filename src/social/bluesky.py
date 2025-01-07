@@ -127,18 +127,55 @@ class BlueskyClient:
             })
             return None
             
-    def get_post_thread(self, uri: str, depth: int = 1) -> Optional[Any]:
-        """Get thread for a post"""
+    def get_author_feed(self, actor: Optional[str] = None, limit: int = 20) -> Any:
+        """Get posts from an author's feed"""
+        try:
+            if actor is None:
+                actor = self.profile.did
+                
+            logger.debug("Fetching author feed", extra={
+                'context': {
+                    'actor': actor,
+                    'limit': limit,
+                    'component': 'bluesky.feed'
+                }
+            })
+            
+            params = AuthorFeedParams(actor=actor, limit=limit)
+            feed = self.client.get_author_feed(params=params)
+            
+            logger.info(f"Successfully fetched feed for {actor}", extra={
+                'context': {
+                    'actor': actor,
+                    'limit': limit,
+                    'component': 'bluesky.feed'
+                }
+            })
+            return feed
+        except Exception as e:
+            logger.error("Error fetching author feed", exc_info=True, extra={
+                'context': {
+                    'actor': actor,
+                    'limit': limit,
+                    'error': str(e),
+                    'component': 'bluesky.feed'
+                }
+            })
+            return None
+
+    def get_post_thread(self, uri: str) -> Any:
+        """Get a thread of posts"""
         try:
             logger.debug("Fetching post thread", extra={
                 'context': {
                     'uri': uri,
-                    'depth': depth,
                     'component': 'bluesky.thread'
                 }
             })
-            thread = self.client.get_post_thread(uri=uri, depth=depth)
-            logger.info(f"Successfully fetched thread for post {uri}", extra={
+            
+            thread = self.client.get_post_thread(uri)
+            
+            logger.info("Successfully fetched thread", extra={
                 'context': {
                     'uri': uri,
                     'component': 'bluesky.thread'
@@ -148,93 +185,79 @@ class BlueskyClient:
         except Exception as e:
             logger.error("Error fetching post thread", exc_info=True, extra={
                 'context': {
+                    'uri': uri,
                     'error': str(e),
                     'component': 'bluesky.thread'
                 }
             })
             return None
-            
-    def like_post(self, uri: str, cid: str) -> bool:
+
+    def like_post(self, uri: str, cid: Optional[str] = None) -> bool:
         """Like a post"""
         try:
-            logger.debug("Attempting to like post", extra={
+            logger.debug("Liking post", extra={
                 'context': {
                     'uri': uri,
                     'cid': cid,
                     'component': 'bluesky.like'
                 }
             })
-            self.client.like(uri=uri, cid=cid)
-            logger.info(f"Successfully liked post {uri}", extra={
+            
+            if cid is None:
+                thread = self.get_post_thread(uri)
+                if thread and hasattr(thread, 'thread') and hasattr(thread.thread, 'post'):
+                    cid = thread.thread.post.cid
+                else:
+                    raise ValueError("Could not determine post CID")
+            
+            self.client.like(uri, cid)
+            
+            logger.info("Successfully liked post", extra={
                 'context': {
                     'uri': uri,
+                    'cid': cid,
                     'component': 'bluesky.like'
                 }
             })
-            return True
+            return "success"
         except Exception as e:
             logger.error("Error liking post", exc_info=True, extra={
                 'context': {
+                    'uri': uri,
+                    'cid': cid,
                     'error': str(e),
                     'component': 'bluesky.like'
                 }
             })
             return False
-            
-    def reply_to_post(self, uri: str, cid: str, text: str) -> Optional[Any]:
+
+    def reply_to_post(self, uri: str, text: str) -> Any:
         """Reply to a post"""
         try:
-            logger.debug("Creating reply", extra={
+            logger.debug("Replying to post", extra={
                 'context': {
                     'uri': uri,
-                    'cid': cid,
                     'text_length': len(text),
                     'component': 'bluesky.reply'
                 }
             })
-            reply = self.client.send_post(text=text, reply_to={"uri": uri, "cid": cid})
-            logger.info(f"Successfully replied to post {uri}", extra={
+            
+            response = self.client.send_post(text=text, reply_to=uri)
+            
+            logger.info("Successfully replied to post", extra={
                 'context': {
                     'uri': uri,
-                    'reply_uri': getattr(reply, 'uri', None),
+                    'response_uri': response.uri if response else None,
                     'component': 'bluesky.reply'
                 }
             })
-            return reply
+            return response
         except Exception as e:
             logger.error("Error replying to post", exc_info=True, extra={
                 'context': {
+                    'uri': uri,
                     'error': str(e),
                     'component': 'bluesky.reply'
-                }
-            })
-            return None
-            
-    def get_author_feed(self, actor: str, limit: int = 20) -> Optional[Any]:
-        """Get posts from a specific author"""
-        try:
-            logger.debug("Fetching author feed", extra={
-                'context': {
-                    'actor': actor,
-                    'limit': limit,
-                    'component': 'bluesky.feed'
-                }
-            })
-            params = AuthorFeedParams(actor=actor, limit=limit)
-            feed = self.client.app.bsky.feed.get_author_feed(params)
-            logger.info(f"Successfully fetched feed for author {actor}", extra={
-                'context': {
-                    'actor': actor,
-                    'feed_length': len(feed.feed) if hasattr(feed, 'feed') else 0,
-                    'component': 'bluesky.feed'
-                }
-            })
-            return feed
-        except Exception as e:
-            logger.error("Error fetching author feed", exc_info=True, extra={
-                'context': {
-                    'error': str(e),
-                    'component': 'bluesky.feed'
                 }
             })
             return None
