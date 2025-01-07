@@ -1,10 +1,22 @@
 import os
 from dotenv import load_dotenv
+from pathlib import Path
 
 # Load environment variables from .env file
 load_dotenv()
 
 class Config:
+    # Application Configuration
+    APP_NAME = "botitibot"
+    LOG_LEVEL = os.getenv('LOG_LEVEL', 'INFO')
+    LOG_DIR = Path("logs")
+    
+    # Component Log Levels (can be overridden by environment variables)
+    CONTENT_LOG_LEVEL = os.getenv('CONTENT_LOG_LEVEL', LOG_LEVEL)
+    SOCIAL_LOG_LEVEL = os.getenv('SOCIAL_LOG_LEVEL', LOG_LEVEL)
+    SCHEDULER_LOG_LEVEL = os.getenv('SCHEDULER_LOG_LEVEL', LOG_LEVEL)
+    DATABASE_LOG_LEVEL = os.getenv('DATABASE_LOG_LEVEL', LOG_LEVEL)
+    
     # OpenAI Configuration
     OPENAI_API_KEY = os.getenv('OPENAI_API_KEY')
     OPENAI_API_BASE = os.getenv('OPENAI_API_BASE')
