@@ -119,11 +119,20 @@ class QueueManager:
             
         except RateLimitError as e:
             logger.warning(f"Rate limit hit for task {task.id}, platform {task.kwargs.get('platform', 'unknown')}")
+            if task.retries >= task.max_retries:
+                self._task_results[task.id] = {
+                    'status': 'failed',
+                    'result': None,
+                    'error': str(e),
+                    'retries': task.retries + 1
+                }
+                return
+            
             self._task_results[task.id] = {
                 'status': 'retrying',
                 'result': None,
                 'error': str(e),
-                'retries': task.retries
+                'retries': task.retries + 1
             }
             await self._schedule_retry(task, e.retry_after if hasattr(e, 'retry_after') else 60)
             
@@ -135,7 +144,7 @@ class QueueManager:
                     'status': 'failed',
                     'result': None,
                     'error': str(e),
-                    'retries': task.retries
+                    'retries': task.retries + 1
                 }
                 return
             
@@ -145,7 +154,7 @@ class QueueManager:
                 'status': 'retrying',
                 'result': None,
                 'error': str(e),
-                'retries': task.retries
+                'retries': task.retries + 1
             }
             await self._schedule_retry(task, delay)
 
