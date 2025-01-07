@@ -4,7 +4,9 @@ from src.social.bluesky import BlueskyClient
 
 
 class TestBlueskyClient(unittest.TestCase):
-    def setUp(self):
+    @patch('src.social.bluesky.Client')
+    def setUp(self, mock_client):
+        self.mock_client = mock_client
         self.bluesky_client = BlueskyClient()
         self.bluesky_client.__enter__()
     
@@ -12,11 +14,10 @@ class TestBlueskyClient(unittest.TestCase):
         self.bluesky_client.__exit__(None, None, None)
 
     @patch('src.social.bluesky.client_utils.TextBuilder')
-    @patch('src.social.bluesky.Client')
-    def test_post_content_with_link(self, mock_client, mock_text_builder):
+    def test_post_content_with_link(self, mock_text_builder):
         # Arrange
         mock_text_builder_instance = mock_text_builder.return_value
-        mock_client_instance = mock_client.return_value
+        mock_client_instance = self.mock_client.return_value
         mock_client_instance.send_post.return_value = "mock_post_response"
         self.bluesky_client.client = mock_client_instance
 
@@ -34,11 +35,10 @@ class TestBlueskyClient(unittest.TestCase):
         self.assertEqual(result, "mock_post_response")
 
     @patch('src.social.bluesky.client_utils.TextBuilder')
-    @patch('src.social.bluesky.Client')
-    def test_post_content_error_handling(self, mock_client, mock_text_builder):
+    def test_post_content_error_handling(self, mock_text_builder):
         # Arrange
         mock_text_builder_instance = mock_text_builder.return_value
-        mock_client_instance = mock_client.return_value
+        mock_client_instance = self.mock_client.return_value
         mock_client_instance.send_post.side_effect = Exception("Network error")
         self.bluesky_client.client = mock_client_instance
         
@@ -51,19 +51,18 @@ class TestBlueskyClient(unittest.TestCase):
         mock_text_builder_instance.link.assert_called_once_with("🔗", "https://example.com")
         mock_client_instance.send_post.assert_called_once_with(mock_text_builder_instance)
 
-    @patch('src.social.bluesky.Client')
-    def test_get_timeline_default_limit(self, mock_client):
+    def test_get_timeline_default_limit(self):
         # Arrange
         mock_timeline = MagicMock()
-        mock_client.return_value.get_timeline.return_value = mock_timeline
-        self.bluesky_client.client = mock_client.return_value
+        self.mock_client.return_value.get_timeline.return_value = mock_timeline
+        self.bluesky_client.client = self.mock_client.return_value
 
         # Act
         result = self.bluesky_client.get_timeline()
 
         # Assert
         self.assertEqual(result, mock_timeline)
-        mock_client.return_value.get_timeline.assert_called_once_with(limit=20)
+        self.mock_client.return_value.get_timeline.assert_called_once_with(limit=20)
 
 
     def test_get_timeline_with_custom_limit(self):
@@ -79,10 +78,9 @@ class TestBlueskyClient(unittest.TestCase):
         self.assertEqual(result, mock_timeline)
         self.bluesky_client.client.get_timeline.assert_called_once_with(limit=custom_limit)
 
-    @patch('src.social.bluesky.Client')
-    def test_get_post_thread_valid_uri(self, mock_client):
+    def test_get_post_thread_valid_uri(self):
         # Arrange
-        mock_client_instance = mock_client.return_value
+        mock_client_instance = self.mock_client.return_value
         mock_client_instance.get_post_thread.return_value = MagicMock(name='mock_thread')
         self.bluesky_client.client = mock_client_instance
         test_uri = "at://did:plc:1234abcd/app.bsky.feed.post/1234"
@@ -94,25 +92,23 @@ class TestBlueskyClient(unittest.TestCase):
         self.assertIsNotNone(result)
         mock_client_instance.get_post_thread.assert_called_once_with(test_uri)
 
-    @patch('src.social.bluesky.Client')
-    def test_like_post_with_uri_and_cid(self, mock_client):
+    def test_like_post_with_uri_and_cid(self):
         # Arrange
         uri = "test_uri"
         cid = "test_cid"
-        mock_client.return_value.like.return_value = "success"
-        self.bluesky_client.client = mock_client.return_value
+        self.mock_client.return_value.like.return_value = "success"
+        self.bluesky_client.client = self.mock_client.return_value
 
         # Act
         result = self.bluesky_client.like_post(uri, cid)
 
         # Assert
         self.assertEqual(result, "success")
-        mock_client.return_value.like.assert_called_once_with(uri, cid)
+        self.mock_client.return_value.like.assert_called_once_with(uri, cid)
 
-    @patch('src.social.bluesky.Client')
-    def test_like_post_uri_only(self, mock_client):
+    def test_like_post_uri_only(self):
         # Arrange
-        mock_client_instance = mock_client.return_value
+        mock_client_instance = self.mock_client.return_value
         mock_post = MagicMock()
         mock_post.thread.post.cid = 'test_cid'
         mock_client_instance.get_post_thread.return_value = mock_post
@@ -144,26 +140,23 @@ class TestBlueskyClient(unittest.TestCase):
     
 
     @patch('src.social.bluesky.AuthorFeedParams')
-    @patch('src.social.bluesky.Client')
-    def test_get_author_feed_current_user(self, mock_client, mock_params):
+    def test_get_author_feed_current_user(self, mock_params):
         # Arrange
         mock_profile = MagicMock()
         mock_profile.did = 'test_user_did'
         self.bluesky_client.profile = mock_profile
-        self.bluesky_client.client = mock_client
+        self.bluesky_client.client = self.mock_client
 
         mock_params.return_value = 'mocked_params'
-        mock_client.get_author_feed.return_value = 'mocked_feed'
+        self.mock_client.get_author_feed.return_value = 'mocked_feed'
 
         # Act
         result = self.bluesky_client.get_author_feed()
 
         # Assert
         mock_params.assert_called_once_with(actor='test_user_did', limit=20)
-        mock_client.get_author_feed.assert_called_once_with(params='mocked_params')
+        self.mock_client.get_author_feed.assert_called_once_with(params='mocked_params')
         self.assertEqual(result, 'mocked_feed')
 
 if __name__ == '__main__':
     unittest.main()
-
-

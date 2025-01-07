@@ -5,11 +5,13 @@ from atproto_client.models.app.bsky.feed.get_author_feed import Params as Author
 
 class BlueskyClient:
     def __init__(self):
-        self.client = Client()
+        self.client = None
         self.profile = None
-        self.setup_auth()
     
     def __enter__(self):
+        if not self.client:
+            self.client = Client()
+            self.setup_auth()
         return self
     
     def __exit__(self, exc_type, exc_val, exc_tb):
