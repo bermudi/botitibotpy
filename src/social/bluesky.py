@@ -302,6 +302,7 @@ class BlueskyClient:
     
     @handle_rate_limit("auth")
     def setup_auth(self) -> bool:
+        """Authenticate with Bluesky using credentials from config"""
         try:
             # Try to load existing session
             session = self._load_session()
@@ -334,23 +335,75 @@ class BlueskyClient:
                     'component': 'bluesky.auth'
                 }
             })
-            self.client = Client()
             
-            self.profile = self.client.login(
-                Config.BLUESKY_IDENTIFIER,
-                Config.BLUESKY_PASSWORD
-            )
+            max_retries = 3
+            base_delay = 1
+            last_error = None
             
-            # Save new session
-            self._save_session(self.client.session)
+            for attempt in range(max_retries):
+                try:
+                    self.client = Client()
+                    self.profile = self.client.login(
+                        Config.BLUESKY_IDENTIFIER,
+                        Config.BLUESKY_PASSWORD
+                    )
+                    
+                    # Save new session
+                    self._save_session(self.client.session)
+                    
+                    logger.info(f"Successfully logged in as: {self.profile.display_name}", extra={
+                        'context': {
+                            'display_name': self.profile.display_name,
+                            'component': 'bluesky.auth'
+                        }
+                    })
+                    return True
+                    
+                except RequestException as e:
+                    last_error = e
+                    response = getattr(e, 'response', None)
+                    if response and response.status_code == 429:
+                        # Get rate limit info
+                        reset_time = int(response.headers.get('ratelimit-reset', 0))
+                        current_time = int(time.time())
+                        wait_time = max(30, reset_time - current_time)
+                        
+                        if attempt < max_retries - 1:
+                            logger.warning(f"Rate limit hit during auth, waiting {wait_time}s", extra={
+                                'context': {
+                                    'wait_time': wait_time,
+                                    'attempt': attempt + 1,
+                                    'reset_time': reset_time,
+                                    'component': 'bluesky.auth'
+                                }
+                            })
+                            time.sleep(wait_time)
+                            continue
+                    
+                    # For non-rate-limit errors, use exponential backoff
+                    if attempt < max_retries - 1:
+                        delay = base_delay * (2 ** attempt)
+                        logger.warning(f"Auth request failed, retrying in {delay}s", extra={
+                            'context': {
+                                'error': str(e),
+                                'attempt': attempt + 1,
+                                'delay': delay,
+                                'component': 'bluesky.auth'
+                            }
+                        })
+                        time.sleep(delay)
+                        continue
             
-            logger.info(f"Successfully logged in as: {self.profile.display_name}", extra={
-                'context': {
-                    'display_name': self.profile.display_name,
-                    'component': 'bluesky.auth'
-                }
-            })
-            return True
+            if last_error:
+                logger.error("Error authenticating with Bluesky", exc_info=True, extra={
+                    'context': {
+                        'error': str(last_error),
+                        'component': 'bluesky.auth'
+                    }
+                })
+            self._cleanup_session()
+            return False
+            
         except Exception as e:
             logger.error("Error authenticating with Bluesky", exc_info=True, extra={
                 'context': {
