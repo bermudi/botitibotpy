@@ -5,6 +5,7 @@ from typing import Optional, Dict, Any, List
 from sqlalchemy.orm import Session
 from dataclasses import dataclass
 from .queue_manager import QueueManager, Task, TaskPriority
+from .exceptions import RateLimitError
 from ..database.operations import DatabaseOperations
 from ..content.generator import ContentGenerator
 from ..social.twitter import TwitterClient
@@ -140,6 +141,9 @@ class TaskScheduler:
             logger.warning(f"{platform} resource not found: {str(error)}")
             return True
             
+        # Unknown errors should not disable the platform
+        # Return False to indicate error was not handled
+        platform_config.enabled = True  # Ensure platform stays enabled
         return False
 
     async def _schedule_content_generation(self):

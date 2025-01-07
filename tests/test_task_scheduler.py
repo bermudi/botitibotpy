@@ -2,7 +2,8 @@ import unittest
 from unittest.mock import patch, MagicMock, AsyncMock, call
 import asyncio
 import pytest
-from src.scheduler.task_scheduler import TaskScheduler, SchedulerConfig
+from src.scheduler.task_scheduler import TaskScheduler, SchedulerConfig, PlatformConfig
+from src.scheduler.exceptions import RateLimitError
 from src.scheduler.queue_manager import QueueManager, Task, TaskPriority
 from src.database.models import Platform
 from datetime import datetime
@@ -82,6 +83,99 @@ class TestTaskScheduler(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(self.task_scheduler.config.reply_check_interval, 1)
         self.assertEqual(self.task_scheduler.config.metrics_update_interval, 3)
         self.assertEqual(self.task_scheduler.queue_manager.max_concurrent_tasks, 2)
+
+    async def test_update_interval(self):
+        """Test updating task intervals at runtime"""
+        # Arrange
+        original_interval = self.task_scheduler.intervals['content_generation']
+        
+        # Act
+        self.task_scheduler.update_interval('content_generation', 45)
+        
+        # Assert
+        self.assertEqual(self.task_scheduler.intervals['content_generation'], 45)
+        self.assertNotEqual(self.task_scheduler.intervals['content_generation'], original_interval)
+
+    async def test_invalid_interval_update(self):
+        """Test updating invalid task interval"""
+        # Act & Assert
+        with self.assertRaises(ValueError):
+            self.task_scheduler.update_interval('nonexistent_task', 30)
+
+    async def test_platform_config(self):
+        """Test platform-specific configuration"""
+        # Arrange
+        config = SchedulerConfig(
+            twitter=PlatformConfig(
+                enabled=True,
+                retry_limit=5,
+                rate_limit_window=900,
+                max_requests_per_window=50
+            ),
+            bluesky=PlatformConfig(
+                enabled=True,
+                retry_limit=3,
+                rate_limit_window=600,
+                max_requests_per_window=30
+            )
+        )
+        
+        # Act
+        scheduler = TaskScheduler(self.mock_db, config=config)
+        
+        # Assert
+        self.assertEqual(scheduler.config.twitter.retry_limit, 5)
+        self.assertEqual(scheduler.config.twitter.rate_limit_window, 900)
+        self.assertEqual(scheduler.config.bluesky.max_requests_per_window, 30)
+
+    async def test_handle_platform_error_rate_limit(self):
+        """Test handling of platform rate limit errors"""
+        # Arrange
+        error = RateLimitError(retry_after=60)
+        
+        # Act
+        handled = await self.task_scheduler._handle_platform_error('twitter', error)
+        
+        # Assert
+        self.assertTrue(handled)
+        self.assertTrue(self.task_scheduler.config.twitter.enabled)
+
+    async def test_handle_platform_error_unauthorized(self):
+        """Test handling of platform authentication errors"""
+        # Arrange
+        error = Exception("Unauthorized: Invalid credentials")
+        
+        # Act
+        handled = await self.task_scheduler._handle_platform_error('twitter', error)
+        
+        # Assert
+        self.assertTrue(handled)
+        self.assertFalse(self.task_scheduler.config.twitter.enabled)
+
+    async def test_handle_platform_error_not_found(self):
+        """Test handling of platform not found errors"""
+        # Arrange
+        error = Exception("Not Found: Resource does not exist")
+        
+        # Act
+        handled = await self.task_scheduler._handle_platform_error('twitter', error)
+        
+        # Assert
+        self.assertTrue(handled)
+        self.assertTrue(self.task_scheduler.config.twitter.enabled)
+
+    async def test_handle_platform_error_unknown(self):
+        """Test handling of unknown platform errors"""
+        # Arrange
+        error = Exception("Unknown error")
+        
+        # Act
+        handled = await self.task_scheduler._handle_platform_error('twitter', error)
+        
+        # Assert
+        self.assertFalse(handled)
+        # Unknown errors should not disable the platform
+        self.assertTrue(self.task_scheduler.config.twitter.enabled)
 
     @patch('src.scheduler.task_scheduler.TaskScheduler._schedule_content_generation')
     @patch('src.scheduler.task_scheduler.TaskScheduler._schedule_metrics_collection')

@@ -4,6 +4,7 @@ import pytest
 from datetime import datetime
 from unittest.mock import MagicMock, AsyncMock, patch
 from src.scheduler.queue_manager import QueueManager, Task, TaskPriority
+from src.scheduler.exceptions import RateLimitError
 
 @pytest.mark.asyncio
 class TestQueueManager(unittest.IsolatedAsyncioTestCase):
@@ -170,15 +171,16 @@ class TestQueueManager(unittest.IsolatedAsyncioTestCase):
             coroutine=failing_coroutine,
             max_retries=1
         )
-
+        
         # Act
         await self.queue_manager.add_task(task)
-        await asyncio.sleep(0.5)  # Allow time for retries
-
+        await asyncio.sleep(3.0)  # Allow time for retries
+        
         # Assert
         self.assertEqual(attempts, 2)  # Called twice (original + retry)
-        task_status = self.queue_manager.get_task_status("retry_task")
-        self.assertEqual(task_status['status'], 'completed')
+        result = self.queue_manager.get_task_status("retry_task")
+        self.assertEqual(result['status'], 'completed')
+        self.assertEqual(result['result'], 'success')
 
     async def test_task_failure_max_retries(self):
         """Test task fails after max retries"""
@@ -307,6 +309,90 @@ class TestQueueManager(unittest.IsolatedAsyncioTestCase):
         # Cleanup
         task_event.set()  # Allow tasks to complete
         await asyncio.sleep(0.05)
+
+    async def test_retry_mechanism(self):
+        """Test task retry mechanism with exponential backoff"""
+        # Arrange
+        attempt_count = 0
+        
+        async def failing_coroutine():
+            nonlocal attempt_count
+            attempt_count += 1
+            if attempt_count < 3:  # Fail first two attempts
+                raise ValueError("Simulated failure")
+            return "success"
+            
+        task = Task(
+            id="retry_test",
+            priority=TaskPriority.HIGH,
+            created_at=datetime.now(),
+            coroutine=failing_coroutine,
+            max_retries=3
+        )
+        
+        # Act
+        await self.queue_manager.add_task(task)
+        await asyncio.sleep(4.0)  # Let retries happen
+        
+        # Assert
+        result = self.queue_manager.get_task_status("retry_test")
+        self.assertEqual(result['status'], 'completed')
+        self.assertEqual(result['result'], 'success')
+        self.assertEqual(result['retries'], 2)
+
+    async def test_rate_limit_handling(self):
+        """Test handling of rate limit errors"""
+        # Arrange
+        rate_limited = False
+        
+        async def rate_limited_coroutine(*args, **kwargs):
+            nonlocal rate_limited
+            if not rate_limited:
+                rate_limited = True
+                raise RateLimitError(retry_after=1)
+            return "success after rate limit"
+            
+        task = Task(
+            id="rate_limit_test",
+            priority=TaskPriority.HIGH,
+            created_at=datetime.now(),
+            coroutine=rate_limited_coroutine,
+            kwargs={'platform': 'twitter'},
+            max_retries=2
+        )
+        
+        # Act
+        await self.queue_manager.add_task(task)
+        await asyncio.sleep(2.0)  # Wait for rate limit and retry
+        
+        # Assert
+        result = self.queue_manager.get_task_status("rate_limit_test")
+        self.assertEqual(result['status'], 'completed')
+        self.assertEqual(result['result'], 'success after rate limit')
+
+    async def test_max_retries_exceeded(self):
+        """Test behavior when max retries is exceeded"""
+        # Arrange
+        async def always_failing_coroutine():
+            raise ValueError("Always fails")
+            
+        task = Task(
+            id="max_retries_test",
+            priority=TaskPriority.HIGH,
+            created_at=datetime.now(),
+            coroutine=always_failing_coroutine,
+            max_retries=2
+        )
+        
+        # Act
+        await self.queue_manager.add_task(task)
+        await asyncio.sleep(4.0)  # Let all retries happen
+        
+        # Assert
+        result = self.queue_manager.get_task_status("max_retries_test")
+        self.assertEqual(result['status'], 'failed')
+        self.assertIn('Always fails', result['error'])
+        self.assertEqual(result['retries'], 3)  # Initial try + 2 retries
 
 if __name__ == '__main__':
     pytest.main([__file__])

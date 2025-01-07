@@ -5,6 +5,7 @@ from dataclasses import dataclass
 from datetime import datetime, timedelta
 from enum import Enum
 import heapq
+from .exceptions import RateLimitError
 
 logger = logging.getLogger(__name__)
 
@@ -22,19 +23,13 @@ class Task:
     args: tuple = ()
     kwargs: dict = None
     max_retries: int = 3
-    retry_count: int = 0
+    retries: int = 0
     
     def __lt__(self, other):
         # For priority queue comparison
         if self.priority.value != other.priority.value:
             return self.priority.value < other.priority.value
         return self.created_at < other.created_at
-
-class RateLimitError(Exception):
-    """Raised when a rate limit is hit"""
-    def __init__(self, retry_after: int):
-        self.retry_after = retry_after
-        super().__init__(f"Rate limit exceeded. Retry after {retry_after} seconds")
 
 class QueueManager:
     def __init__(self, max_concurrent_tasks: int = 5):
@@ -47,7 +42,7 @@ class QueueManager:
         self.task_queue = []  # Priority queue
         self.running_tasks: Dict[str, asyncio.Task] = {}
         self.semaphore = asyncio.Semaphore(max_concurrent_tasks)
-        self.task_results: Dict[str, Any] = {}
+        self._task_results: Dict[str, Any] = {}
         self.cancelled_tasks = set()  # Track cancelled tasks
         self.queue_lock = asyncio.Lock()  # Lock for queue operations
         self.rate_limit_delays: Dict[str, datetime] = {}  # Track rate limit delays by platform
@@ -83,7 +78,7 @@ class QueueManager:
         """
         # Mark as cancelled first
         self.cancelled_tasks.add(task_id)
-        self.task_results[task_id] = {
+        self._task_results[task_id] = {
             'status': 'cancelled',
             'error': 'Task cancelled',
             'completed_at': datetime.now()
@@ -111,61 +106,55 @@ class QueueManager:
                 
         return False
         
-    async def _execute_task(self, task: Task):
-        """Execute a task with retry logic and error handling"""
-        while task.retry_count <= task.max_retries:
-            try:
-                # Check if we need to wait for rate limit
-                platform = task.kwargs.get('platform', 'default') if task.kwargs else 'default'
-                if platform in self.rate_limit_delays:
-                    wait_until = self.rate_limit_delays[platform]
-                    if wait_until > datetime.now():
-                        wait_seconds = (wait_until - datetime.now()).total_seconds()
-                        logger.info(f"Waiting {wait_seconds} seconds for rate limit on {platform}")
-                        await asyncio.sleep(wait_seconds)
-                    del self.rate_limit_delays[platform]
-
-                # Execute the task
-                result = await task.coroutine(*task.args, **(task.kwargs or {}))
-                
-                # Store successful result
-                self.task_results[task.id] = {
-                    'status': 'completed',
-                    'result': result,
-                    'completed_at': datetime.now(),
-                    'retries': task.retry_count
+    async def _execute_task(self, task: Task) -> None:
+        """Execute a task and handle any errors"""
+        try:
+            result = await task.coroutine(*task.args, **(task.kwargs or {}))
+            self._task_results[task.id] = {
+                'status': 'completed',
+                'result': result,
+                'error': None,
+                'retries': task.retries
+            }
+            
+        except RateLimitError as e:
+            logger.warning(f"Rate limit hit for task {task.id}, platform {task.kwargs.get('platform', 'unknown')}")
+            self._task_results[task.id] = {
+                'status': 'retrying',
+                'result': None,
+                'error': str(e),
+                'retries': task.retries
+            }
+            await self._schedule_retry(task, e.retry_after if hasattr(e, 'retry_after') else 60)
+            
+        except Exception as e:
+            logger.error(f"Error executing task {task.id}: {str(e)}")
+            if task.retries >= task.max_retries:
+                logger.error(f"Task {task.id} has exceeded maximum retries")
+                self._task_results[task.id] = {
+                    'status': 'failed',
+                    'result': None,
+                    'error': str(e),
+                    'retries': task.retries
                 }
-                return result
-                
-            except RateLimitError as e:
-                logger.warning(f"Rate limit hit for task {task.id}, platform {platform}")
-                self.rate_limit_delays[platform] = datetime.now() + timedelta(seconds=e.retry_after)
-                # Requeue the task
-                task.retry_count += 1
-                if task.retry_count <= task.max_retries:
-                    await self.add_task(task)
-                    return None
-                    
-            except Exception as e:
-                logger.error(f"Error executing task {task.id}: {str(e)}", exc_info=True)
-                task.retry_count += 1
-                
-                if task.retry_count <= task.max_retries:
-                    # Exponential backoff for retries
-                    delay = 2 ** task.retry_count
-                    logger.info(f"Retrying task {task.id} in {delay} seconds (attempt {task.retry_count})")
-                    await asyncio.sleep(delay)
-                else:
-                    # Store failed result
-                    self.task_results[task.id] = {
-                        'status': 'failed',
-                        'error': str(e),
-                        'completed_at': datetime.now(),
-                        'retries': task.retry_count
-                    }
-                    return None
-                    
-        return None
+                return
+            
+            # Calculate exponential backoff delay
+            delay = 2 ** task.retries
+            self._task_results[task.id] = {
+                'status': 'retrying',
+                'result': None,
+                'error': str(e),
+                'retries': task.retries
+            }
+            await self._schedule_retry(task, delay)
+
+    async def _schedule_retry(self, task: Task, delay: int) -> None:
+        """Schedule a task for retry after delay seconds"""
+        task.retries += 1
+        logger.info(f"Retrying task {task.id} in {delay} seconds (attempt {task.retries})")
+        await asyncio.sleep(delay)
+        await self.add_task(task)
 
     async def _process_queue(self):
         """Process tasks in the queue"""
@@ -190,6 +179,11 @@ class QueueManager:
                     lambda t, task_id=task.id: self.running_tasks.pop(task_id, None)
                 )
 
+    @property
+    def task_results(self) -> Dict[str, Any]:
+        """Get task results dictionary"""
+        return self._task_results
+
     def get_task_status(self, task_id: str) -> Optional[Dict[str, Any]]:
         """Get the status of a task
         
@@ -199,7 +193,7 @@ class QueueManager:
         Returns:
             Optional[Dict[str, Any]]: Task status and result if available
         """
-        return self.task_results.get(task_id)
+        return self._task_results.get(task_id)
         
     def get_queue_status(self) -> Dict[str, Any]:
         """Get the current status of the queue
@@ -210,7 +204,7 @@ class QueueManager:
         return {
             'queued_tasks': len(self.task_queue),
             'running_tasks': len(self.running_tasks),
-            'completed_tasks': len(self.task_results),
+            'completed_tasks': len(self._task_results),
             'tasks_by_priority': {
                 priority.name: len([t for t in self.task_queue if t.priority == priority])
                 for priority in TaskPriority
