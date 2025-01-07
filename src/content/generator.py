@@ -14,7 +14,7 @@ from llama_index.embeddings.gemini import GeminiEmbedding
 import chromadb
 from ..config import Config
 
-logger = logging.getLogger(__name__)
+logger = logging.getLogger("botitibot.content")
 
 class ContentGenerator:
     def __init__(self, log_level: int = logging.INFO):
@@ -23,13 +23,23 @@ class ContentGenerator:
         Args:
             log_level: The logging level to use (default: logging.INFO)
         """
-        # Configure class logger
+        self.log_level = log_level
         logger.setLevel(log_level)
         
-        logger.debug("Initializing ContentGenerator")
+        logger.info("Initializing ContentGenerator", extra={
+            'context': {
+                'log_level': log_level,
+                'component': 'content_generator'
+            }
+        })
         
         # Initialize Gemini embedding model
-        logger.debug("Setting up Gemini embedding model")
+        logger.debug("Setting up Gemini embedding model", extra={
+            'context': {
+                'model': "models/embedding-001",
+                'component': 'content_generator.embedding'
+            }
+        })
         self.embed_model = GeminiEmbedding(
             model_name="models/embedding-001",
             api_key=Config.GOOGLE_API_KEY
@@ -37,7 +47,13 @@ class ContentGenerator:
         Settings.embed_model = self.embed_model
         
         # Configure LlamaIndex LLM settings
-        logger.debug("Configuring LlamaIndex LLM settings")
+        logger.debug("Configuring LlamaIndex LLM settings", extra={
+            'context': {
+                'model': Config.OPENAI_API_MODEL,
+                'temperature': 0.7,
+                'component': 'content_generator.llm'
+            }
+        })
         Settings.llm = OpenAI(
             temperature=0.7,
             model=Config.OPENAI_API_MODEL,
@@ -50,19 +66,32 @@ class ContentGenerator:
         self.persist_dir = "chroma_db"
         
         # Initialize ChromaDB client
-        logger.debug(f"Initializing ChromaDB client with persist_dir: {self.persist_dir}")
+        logger.debug(f"Initializing ChromaDB client with persist_dir: {self.persist_dir}", extra={
+            'context': {
+                'persist_dir': self.persist_dir,
+                'component': 'content_generator.chromadb'
+            }
+        })
         self.chroma_client = chromadb.PersistentClient(path=self.persist_dir)
         self.collection_name = "content_collection"
         self.chroma_collection = self.chroma_client.get_or_create_collection(self.collection_name)
         
         # Initialize vector store
-        logger.debug("Setting up vector store and storage context")
+        logger.debug("Setting up vector store and storage context", extra={
+            'context': {
+                'component': 'content_generator.vector_store'
+            }
+        })
         self.vector_store = ChromaVectorStore(chroma_collection=self.chroma_collection)
         self.storage_context = StorageContext.from_defaults(vector_store=self.vector_store)
         
         # Track document hashes
         self.document_hashes = {}
-        logger.info("ContentGenerator initialized successfully")
+        logger.info("ContentGenerator initialized successfully", extra={
+            'context': {
+                'component': 'content_generator'
+            }
+        })
 
     def _calculate_document_hash(self, content: str) -> str:
         """Calculate a hash for document content."""
@@ -76,30 +105,61 @@ class ContentGenerator:
         """Load the vector store index from ChromaDB."""
         try:
             if self.chroma_collection.count() > 0:
-                logger.info("Loading existing index from ChromaDB")
+                logger.info("Loading existing index from ChromaDB", extra={
+                    'context': {
+                        'component': 'content_generator.index'
+                    }
+                })
                 self.index = VectorStoreIndex.from_vector_store(
                     self.vector_store,
                     embed_model=self.embed_model
                 )
-                logger.info(f"Index successfully loaded from {self.persist_dir}")
+                logger.info(f"Index successfully loaded from {self.persist_dir}", extra={
+                    'context': {
+                        'component': 'content_generator.index'
+                    }
+                })
                 return True
-            logger.info("No existing index found in ChromaDB")
+            logger.info("No existing index found in ChromaDB", extra={
+                'context': {
+                    'component': 'content_generator.index'
+                }
+            })
             return False
         except Exception as e:
-            logger.error(f"Failed to load index: {str(e)}", exc_info=True)
+            logger.error(f"Failed to load index: {str(e)}", exc_info=True, extra={
+                'context': {
+                    'component': 'content_generator.index'
+                }
+            })
             return False
 
     def load_content_source(self, directory_path: str) -> bool:
         """Load content from a directory, updating only if documents have changed."""
         try:
-            logger.info(f"Loading content from directory: {os.path.abspath(directory_path)}")
+            logger.info(f"Loading content from directory: {os.path.abspath(directory_path)}", extra={
+                'context': {
+                    'directory_path': directory_path,
+                    'component': 'content_generator.content_source'
+                }
+            })
             if not os.path.exists(directory_path):
-                logger.error(f"Directory does not exist: {directory_path}")
+                logger.error(f"Directory does not exist: {directory_path}", extra={
+                    'context': {
+                        'directory_path': directory_path,
+                        'component': 'content_generator.content_source'
+                    }
+                })
                 return False
 
             # Load documents
             documents = SimpleDirectoryReader(directory_path).load_data()
-            logger.info(f"Found {len(documents)} documents in directory")
+            logger.info(f"Found {len(documents)} documents in directory", extra={
+                'context': {
+                    'directory_path': directory_path,
+                    'component': 'content_generator.content_source'
+                }
+            })
 
             # Track new or modified documents
             new_docs = []
@@ -112,7 +172,12 @@ class ContentGenerator:
                 
                 # Check if document is new or modified
                 if doc_id not in self.document_hashes or self.document_hashes[doc_id] != doc_hash:
-                    logger.debug(f"New or modified document found: {doc.metadata.get('file_path', 'unknown')}")
+                    logger.debug(f"New or modified document found: {doc.metadata.get('file_path', 'unknown')}", extra={
+                        'context': {
+                            'file_path': doc.metadata.get('file_path', 'unknown'),
+                            'component': 'content_generator.content_source'
+                        }
+                    })
                     new_docs.append(doc)
                     new_ids.append(doc_id)
                     new_metadata.append({
@@ -122,89 +187,193 @@ class ContentGenerator:
                     self.document_hashes[doc_id] = doc_hash
 
             if new_docs:
-                logger.info(f"Adding/updating {len(new_docs)} documents to index")
+                logger.info(f"Adding/updating {len(new_docs)} documents to index", extra={
+                    'context': {
+                        'component': 'content_generator.index'
+                    }
+                })
                 # Create or update index with new documents
                 if self.index is None:
-                    logger.debug("Creating new index")
+                    logger.debug("Creating new index", extra={
+                        'context': {
+                            'component': 'content_generator.index'
+                        }
+                    })
                     self.index = VectorStoreIndex.from_documents(
                         new_docs,
                         storage_context=self.storage_context,
                         embed_model=self.embed_model
                     )
                 else:
-                    logger.debug("Updating existing index")
+                    logger.debug("Updating existing index", extra={
+                        'context': {
+                            'component': 'content_generator.index'
+                        }
+                    })
                     for doc, doc_id in zip(new_docs, new_ids):
                         self.index.insert(doc, id=doc_id)
                 
-                logger.info("Documents successfully indexed")
+                logger.info("Documents successfully indexed", extra={
+                    'context': {
+                        'component': 'content_generator.index'
+                    }
+                })
             else:
-                logger.info("No new or modified documents to index")
+                logger.info("No new or modified documents to index", extra={
+                    'context': {
+                        'component': 'content_generator.index'
+                    }
+                })
 
             return True
 
         except Exception as e:
-            logger.error(f"Error loading content source: {str(e)}", exc_info=True)
+            logger.error(f"Error loading content source: {str(e)}", exc_info=True, extra={
+                'context': {
+                    'component': 'content_generator.content_source'
+                }
+            })
             return False
 
     def save_index(self):
         """ChromaDB automatically persists changes, this method is kept for compatibility."""
         if self.index:
-            logger.info(f"Index is automatically persisted in {self.persist_dir}")
+            logger.info(f"Index is automatically persisted in {self.persist_dir}", extra={
+                'context': {
+                    'persist_dir': self.persist_dir,
+                    'component': 'content_generator.index'
+                }
+            })
         else:
-            logger.warning("No index to save")
+            logger.warning("No index to save", extra={
+                'context': {
+                    'component': 'content_generator.index'
+                }
+            })
             
     def generate_post(self, prompt: str, max_length: Optional[int] = None,
                      tone: Optional[str] = None, style: Optional[str] = None) -> Optional[str]:
         try:
             if not self.index:
-                logger.error("No content source loaded")
+                logger.error("No content source loaded", extra={
+                    'context': {
+                        'component': 'content_generator.post'
+                    }
+                })
                 raise ValueError("No content source loaded. Call load_content_source first.")
             
             complete_prompt = self._build_generation_prompt(prompt, max_length, tone, style)
-            logger.debug(f"Generated complete prompt: {complete_prompt}")
+            logger.debug(f"Generated complete prompt: {complete_prompt}", extra={
+                'context': {
+                    'prompt': prompt,
+                    'component': 'content_generator.post'
+                }
+            })
             
             # Debug index state
-            logger.debug(f"Index stats: {self.index.summary}")
+            logger.debug(f"Index stats: {self.index.summary}", extra={
+                'context': {
+                    'component': 'content_generator.index'
+                }
+            })
             
             try:
                 query_engine = self.index.as_query_engine()
-                logger.debug("Query engine created successfully")
+                logger.debug("Query engine created successfully", extra={
+                    'context': {
+                        'component': 'content_generator.query_engine'
+                    }
+                })
             except Exception as qe:
-                logger.error(f"Failed to create query engine: {str(qe)}", exc_info=True)
+                logger.error(f"Failed to create query engine: {str(qe)}", exc_info=True, extra={
+                    'context': {
+                        'component': 'content_generator.query_engine'
+                    }
+                })
                 raise
             
             max_retries = 3
             for attempt in range(max_retries):
                 try:
-                    logger.debug(f"Attempting query (attempt {attempt + 1}/{max_retries})")
-                    logger.debug(f"Using LLM: {self.llm.__class__.__name__}")
+                    logger.debug(f"Attempting query (attempt {attempt + 1}/{max_retries})", extra={
+                        'context': {
+                            'attempt': attempt + 1,
+                            'component': 'content_generator.query'
+                        }
+                    })
+                    logger.debug(f"Using LLM: {self.llm.__class__.__name__}", extra={
+                        'context': {
+                            'llm': self.llm.__class__.__name__,
+                            'component': 'content_generator.llm'
+                        }
+                    })
                     
                     response = query_engine.query(complete_prompt)
-                    logger.info("Query completed successfully")
-                    logger.debug(f"Response type: {type(response)}")
+                    logger.info("Query completed successfully", extra={
+                        'context': {
+                            'component': 'content_generator.query'
+                        }
+                    })
+                    logger.debug(f"Response type: {type(response)}", extra={
+                        'context': {
+                            'response_type': type(response),
+                            'component': 'content_generator.query'
+                        }
+                    })
                     return str(response)
                 except Exception as e:
-                    logger.warning(f"Query attempt {attempt + 1} failed: {str(e)}")
+                    logger.warning(f"Query attempt {attempt + 1} failed: {str(e)}", extra={
+                        'context': {
+                            'attempt': attempt + 1,
+                            'component': 'content_generator.query'
+                        }
+                    })
                     
                     if attempt == max_retries - 1:
-                        logger.error("All query attempts failed", exc_info=True)
+                        logger.error("All query attempts failed", exc_info=True, extra={
+                            'context': {
+                                'component': 'content_generator.query'
+                            }
+                        })
                         raise
-                    logger.info(f"Retrying query after attempt {attempt + 1}")
+                    logger.info(f"Retrying query after attempt {attempt + 1}", extra={
+                        'context': {
+                            'attempt': attempt + 1,
+                            'component': 'content_generator.query'
+                        }
+                    })
                     time.sleep(1)
                                     
         except Exception as e:
-            logger.error(f"Error in generate_post: {str(e)}", exc_info=True)
+            logger.error(f"Error in generate_post: {str(e)}", exc_info=True, extra={
+                'context': {
+                    'component': 'content_generator.post'
+                }
+            })
             return None
             
     def direct_prompt(self, prompt: str) -> Optional[str]:
         """Send a prompt directly to the LLM without using RAG or vector database"""
         try:
-            logger.debug("Sending direct prompt to LLM")
+            logger.debug("Sending direct prompt to LLM", extra={
+                'context': {
+                    'prompt': prompt,
+                    'component': 'content_generator.direct_prompt'
+                }
+            })
             response = self.llm.complete(prompt)
-            logger.info("Direct prompt completed successfully")
+            logger.info("Direct prompt completed successfully", extra={
+                'context': {
+                    'component': 'content_generator.direct_prompt'
+                }
+            })
             return response.text
         except Exception as e:
-            logger.error(f"Error in direct prompt: {str(e)}", exc_info=True)
+            logger.error(f"Error in direct prompt: {str(e)}", exc_info=True, extra={
+                'context': {
+                    'component': 'content_generator.direct_prompt'
+                }
+            })
             return None
 
     def _build_generation_prompt(self,
@@ -213,7 +382,12 @@ class ContentGenerator:
                                tone: Optional[str] = None,
                                style: Optional[str] = None) -> str:
         """Build a complete prompt incorporating all parameters"""
-        logger.debug("Building generation prompt")
+        logger.debug("Building generation prompt", extra={
+            'context': {
+                'base_prompt': base_prompt,
+                'component': 'content_generator.prompt'
+            }
+        })
         prompt_parts = [base_prompt]
         
         if max_length:
@@ -226,7 +400,12 @@ class ContentGenerator:
             prompt_parts.append(f"Write in a {style} style.")
             
         final_prompt = " ".join(prompt_parts)
-        logger.debug(f"Generated prompt: {final_prompt}")
+        logger.debug(f"Generated prompt: {final_prompt}", extra={
+            'context': {
+                'prompt': final_prompt,
+                'component': 'content_generator.prompt'
+            }
+        })
         return final_prompt
 
     def load_webpage(self, url: str) -> Optional[Document]:
@@ -240,7 +419,12 @@ class ContentGenerator:
                               or None if parsing fails
         """
         try:
-            logger.info(f"Fetching content from URL: {url}")
+            logger.info(f"Fetching content from URL: {url}", extra={
+                'context': {
+                    'url': url,
+                    'component': 'content_generator.webpage'
+                }
+            })
             response = requests.get(url, timeout=10)
             response.raise_for_status()
             
@@ -271,11 +455,21 @@ class ContentGenerator:
                 metadata=metadata
             )
             
-            logger.info(f"Successfully parsed webpage: {metadata['title']}")
+            logger.info(f"Successfully parsed webpage: {metadata['title']}", extra={
+                'context': {
+                    'title': metadata['title'],
+                    'component': 'content_generator.webpage'
+                }
+            })
             return doc
             
         except Exception as e:
-            logger.error(f"Error parsing webpage {url}: {str(e)}", exc_info=True)
+            logger.error(f"Error parsing webpage {url}: {str(e)}", exc_info=True, extra={
+                'context': {
+                    'url': url,
+                    'component': 'content_generator.webpage'
+                }
+            })
             return None
             
     def load_webpage_batch(self, urls: List[str]) -> List[Document]:
@@ -306,7 +500,12 @@ class ContentGenerator:
             
             # Check if document is new or modified
             if doc_id not in self.document_hashes or self.document_hashes[doc_id] != doc_hash:
-                logger.info(f"Adding new webpage to index: {url}")
+                logger.info(f"Adding new webpage to index: {url}", extra={
+                    'context': {
+                        'url': url,
+                        'component': 'content_generator.index'
+                    }
+                })
                 
                 if self.index is None:
                     self.index = VectorStoreIndex.from_documents(
@@ -320,11 +519,20 @@ class ContentGenerator:
                 self.document_hashes[doc_id] = doc_hash
                 return True
             
-            logger.info(f"Webpage already indexed and unchanged: {url}")
+            logger.info(f"Webpage already indexed and unchanged: {url}", extra={
+                'context': {
+                    'url': url,
+                    'component': 'content_generator.index'
+                }
+            })
             return True
             
         except Exception as e:
-            logger.error(f"Error adding webpage to index: {str(e)}", exc_info=True)
+            logger.error(f"Error adding webpage to index: {str(e)}", exc_info=True, extra={
+                'context': {
+                    'component': 'content_generator.index'
+                }
+            })
             return False
 
     def parse_rss_feed(self, feed_url: str) -> Optional[List[Document]]:
@@ -338,11 +546,21 @@ class ContentGenerator:
                                     or None if parsing fails
         """
         try:
-            logger.info(f"Fetching RSS feed: {feed_url}")
+            logger.info(f"Fetching RSS feed: {feed_url}", extra={
+                'context': {
+                    'feed_url': feed_url,
+                    'component': 'content_generator.rss'
+                }
+            })
             feed = feedparser.parse(feed_url)
             
             if feed.bozo:  # feedparser sets this flag for malformed feeds
-                logger.error(f"Malformed RSS feed at {feed_url}: {feed.bozo_exception}")
+                logger.error(f"Malformed RSS feed at {feed_url}: {feed.bozo_exception}", extra={
+                    'context': {
+                        'feed_url': feed_url,
+                        'component': 'content_generator.rss'
+                    }
+                })
                 return None
                 
             documents = []
@@ -386,11 +604,21 @@ class ContentGenerator:
                 )
                 documents.append(doc)
             
-            logger.info(f"Successfully parsed {len(documents)} entries from RSS feed: {feed.feed.get('title', feed_url)}")
+            logger.info(f"Successfully parsed {len(documents)} entries from RSS feed: {feed.feed.get('title', feed_url)}", extra={
+                'context': {
+                    'feed_url': feed_url,
+                    'component': 'content_generator.rss'
+                }
+            })
             return documents
             
         except Exception as e:
-            logger.error(f"Error parsing RSS feed {feed_url}: {str(e)}", exc_info=True)
+            logger.error(f"Error parsing RSS feed {feed_url}: {str(e)}", exc_info=True, extra={
+                'context': {
+                    'feed_url': feed_url,
+                    'component': 'content_generator.rss'
+                }
+            })
             return None
             
     def monitor_rss_feed(self, feed_url: str) -> Tuple[int, int]:
@@ -417,7 +645,12 @@ class ContentGenerator:
                     
                     # Check if entry is new or modified
                     if doc_id not in self.document_hashes or self.document_hashes[doc_id] != doc_hash:
-                        logger.info(f"Adding new RSS entry to index: {doc.metadata['title']}")
+                        logger.info(f"Adding new RSS entry to index: {doc.metadata['title']}", extra={
+                            'context': {
+                                'title': doc.metadata['title'],
+                                'component': 'content_generator.index'
+                            }
+                        })
                         
                         if self.index is None:
                             self.index = VectorStoreIndex.from_documents(
@@ -432,11 +665,21 @@ class ContentGenerator:
                         new_entries += 1
                         
                 except Exception as e:
-                    logger.error(f"Error processing RSS entry {doc.metadata.get('title', 'unknown')}: {str(e)}")
+                    logger.error(f"Error processing RSS entry {doc.metadata.get('title', 'unknown')}: {str(e)}", exc_info=True, extra={
+                        'context': {
+                            'title': doc.metadata.get('title', 'unknown'),
+                            'component': 'content_generator.index'
+                        }
+                    })
                     failed_entries += 1
                     
             return (new_entries, failed_entries)
             
         except Exception as e:
-            logger.error(f"Error monitoring RSS feed {feed_url}: {str(e)}", exc_info=True)
+            logger.error(f"Error monitoring RSS feed {feed_url}: {str(e)}", exc_info=True, extra={
+                'context': {
+                    'feed_url': feed_url,
+                    'component': 'content_generator.rss'
+                }
+            })
             return (0, 0)
