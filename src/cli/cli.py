@@ -167,16 +167,16 @@ async def list_scheduled_posts() -> None:
         sys.exit(1)
 
 @social.command()
-@click.argument('post_id', type=int)
+@click.argument('post_id', type=str)
 @async_command
-async def cancel(post_id: int) -> None:
+async def cancel(post_id: str) -> None:
     """Cancel a scheduled post"""
     try:
         db = get_db()
         queue = QueueManager(db=db)
         await queue.start()
         try:
-            if await queue.cancel_task(str(post_id)):
+            if await queue.cancel_task(post_id):
                 click.echo(f"Cancelled post {post_id}")
             else:
                 click.echo(f"Post {post_id} not found", err=True)
