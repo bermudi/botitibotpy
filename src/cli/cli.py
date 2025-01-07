@@ -14,7 +14,7 @@ from ..content.generator import ContentGenerator
 from ..database.operations import DatabaseOperations
 from ..scheduler.task_scheduler import TaskScheduler
 from ..scheduler.queue_manager import QueueManager
-from ..monitoring import MonitoringSystem
+from ..monitoring.system import SystemMonitoring
 from ..social.twitter import TwitterClient
 from ..social.bluesky import BlueskyClient
 
@@ -99,7 +99,7 @@ def auth(platform: str) -> None:
         if platform == 'twitter':
             client = TwitterClient()
             click.echo("Successfully authenticated with twitter")
-        else:
+        elif platform == 'bluesky':
             client = BlueskyClient()
             click.echo("Successfully authenticated with bluesky")
     except Exception as e:
@@ -110,25 +110,29 @@ def auth(platform: str) -> None:
 @social.command()
 @click.argument('platform', type=click.Choice(['twitter', 'bluesky']))
 @click.argument('content')
-@click.option('--schedule', '-s', help='Schedule time (YYYY-MM-DD HH:MM:SS)')
+@click.option('--schedule', '-s', help='Schedule post for future (format: YYYY-MM-DD HH:MM)')
 def post(platform: str, content: str, schedule: Optional[str] = None) -> None:
     """Post content to a social media platform"""
     try:
-        db = DatabaseOperations()
         if schedule:
-            scheduled_time = datetime.strptime(schedule, "%Y-%m-%d %H:%M:%S")
-            db.add_post(platform=platform, content=content, scheduled_time=scheduled_time)
-            click.echo(f"Post scheduled for {schedule}")
+            try:
+                schedule_time = datetime.strptime(schedule, "%Y-%m-%d %H:%M")
+            except ValueError:
+                click.echo("Invalid schedule format. Use YYYY-MM-DD HH:MM", err=True)
+                sys.exit(1)
+                
+            queue = QueueManager()
+            post_id = queue.schedule_post(platform, content, schedule_time)
+            click.echo(f"Post scheduled with ID: {post_id}")
         else:
             if platform == 'twitter':
                 client = TwitterClient()
-                post_id = client.post(content)
-                db.add_post(platform=platform, content=content, post_id=post_id)
-            else:
+                client.post(content)
+                click.echo("Posted to Twitter successfully")
+            elif platform == 'bluesky':
                 client = BlueskyClient()
-                post_id = client.post(content)
-                db.add_post(platform=platform, content=content, post_id=post_id)
-            click.echo(f"Post created successfully on {platform}")
+                client.post(content)
+                click.echo("Posted to Bluesky successfully")
     except Exception as e:
         logger.error(f"Error posting to {platform}: {e}")
         click.echo(f"Error: {str(e)}", err=True)
@@ -138,16 +142,17 @@ def post(platform: str, content: str, schedule: Optional[str] = None) -> None:
 def list_scheduled_posts() -> None:
     """List all scheduled posts"""
     try:
-        db = DatabaseOperations()
-        posts = db.get_scheduled_posts()
+        queue = QueueManager()
+        posts = queue.list_scheduled_posts()
         if posts:
             click.echo("\nScheduled Posts:")
             for post in posts:
-                click.echo(f"\nPlatform: {post.platform}")
-                click.echo(f"Scheduled: {post.scheduled_time}")
-                click.echo(f"Content: {post.content}")
+                click.echo(f"ID: {post['id']}")
+                click.echo(f"Platform: {post['platform']}")
+                click.echo(f"Content: {post['content']}")
+                click.echo(f"Schedule: {post['schedule']}\n")
         else:
-            click.echo("No scheduled posts found")
+            click.echo("No scheduled posts")
     except Exception as e:
         logger.error(f"Error listing scheduled posts: {e}")
         click.echo(f"Error: {str(e)}", err=True)
@@ -158,16 +163,14 @@ def list_scheduled_posts() -> None:
 def cancel(post_id: int) -> None:
     """Cancel a scheduled post"""
     try:
-        db = DatabaseOperations()
-        post = db.get_post(post_id)
-        if post:
-            db.delete_post(post_id)
-            click.echo(f"Post {post_id} canceled successfully")
+        queue = QueueManager()
+        if queue.cancel_post(post_id):
+            click.echo(f"Cancelled post {post_id}")
         else:
             click.echo(f"Post {post_id} not found", err=True)
             sys.exit(1)
     except Exception as e:
-        logger.error(f"Error canceling post: {e}")
+        logger.error(f"Error cancelling post: {e}")
         click.echo(f"Error: {str(e)}", err=True)
         sys.exit(1)
 
@@ -177,41 +180,38 @@ def system():
     pass
 
 @system.command()
-def status():
+def status() -> None:
     """View system status and active tasks"""
     try:
-        monitoring = MonitoringSystem()
+        monitoring = SystemMonitoring()
         status = monitoring.get_current_status()
         click.echo("\nSystem Status:")
-        click.echo(f"CPU Usage: {status['cpu_usage']}%")
-        click.echo(f"Memory Usage: {status['memory_usage']}%")
-        click.echo(f"Disk Usage: {status['disk_usage']}%")
-        click.echo(f"\nActive Tasks: {status['active_tasks']}")
-        click.echo(f"Task Queue Size: {status['queue_size']}")
+        click.echo(f"Scheduler: {'Running' if status['scheduler_running'] else 'Stopped'}")
+        click.echo(f"Tasks queued: {status['tasks_queued']}")
     except Exception as e:
         logger.error(f"Error getting system status: {e}")
         click.echo(f"Error: {str(e)}", err=True)
         sys.exit(1)
 
 @system.command()
-def start():
+def start() -> None:
     """Start the task scheduler"""
     try:
         scheduler = TaskScheduler()
         scheduler.start()
-        click.echo("Task scheduler started successfully")
+        click.echo("Scheduler started")
     except Exception as e:
         logger.error(f"Error starting scheduler: {e}")
         click.echo(f"Error: {str(e)}", err=True)
         sys.exit(1)
 
 @system.command()
-def stop():
+def stop() -> None:
     """Stop the task scheduler"""
     try:
         scheduler = TaskScheduler()
         scheduler.stop()
-        click.echo("Task scheduler stopped successfully")
+        click.echo("Scheduler stopped")
     except Exception as e:
         logger.error(f"Error stopping scheduler: {e}")
         click.echo(f"Error: {str(e)}", err=True)

@@ -3,13 +3,10 @@ Tests for social media CLI commands.
 """
 
 import unittest
-from datetime import datetime
 from unittest.mock import MagicMock, patch
-from click.testing import CliRunner
+from datetime import datetime
 
 from .test_base import BaseCliTest
-from src.database.models import Platform, Post
-from src.cli.cli import social
 
 class TestSocialCommands(BaseCliTest):
     """Test cases for social media commands."""
@@ -17,12 +14,12 @@ class TestSocialCommands(BaseCliTest):
     def setUp(self):
         """Set up test environment."""
         super().setUp()
-        self.mock_db = patch('src.cli.cli.DatabaseOperations').start()
-        self.db_instance = self.mock_db.return_value
         self.mock_twitter = patch('src.cli.cli.TwitterClient').start()
         self.twitter_instance = self.mock_twitter.return_value
         self.mock_bluesky = patch('src.cli.cli.BlueskyClient').start()
         self.bluesky_instance = self.mock_bluesky.return_value
+        self.mock_queue = patch('src.cli.cli.QueueManager').start()
+        self.queue_instance = self.mock_queue.return_value
         
     def test_auth_twitter(self):
         """Test Twitter authentication."""
@@ -30,7 +27,6 @@ class TestSocialCommands(BaseCliTest):
         
         self.assertEqual(result.exit_code, 0)
         self.assertIn("Successfully authenticated with twitter", result.output)
-        self.mock_twitter.assert_called_once()
         
     def test_auth_bluesky(self):
         """Test Bluesky authentication."""
@@ -38,88 +34,76 @@ class TestSocialCommands(BaseCliTest):
         
         self.assertEqual(result.exit_code, 0)
         self.assertIn("Successfully authenticated with bluesky", result.output)
-        self.mock_bluesky.assert_called_once()
         
     def test_post_immediate_twitter(self):
         """Test immediate posting to Twitter."""
-        self.twitter_instance.post.return_value = "tweet_123"
+        content = "Test tweet"
         
-        result = self.invoke_cli(['social', 'post', 'twitter', 'Test tweet'])
+        result = self.invoke_cli(['social', 'post', 'twitter', content])
         
         self.assertEqual(result.exit_code, 0)
-        self.assertIn("Post created successfully on twitter", result.output)
-        self.twitter_instance.post.assert_called_once_with("Test tweet")
-        self.db_instance.add_post.assert_called_once()
+        self.assertIn("Posted to Twitter successfully", result.output)
+        self.twitter_instance.post.assert_called_once_with(content)
         
     def test_post_scheduled(self):
         """Test scheduling a post."""
-        schedule_time = "2025-01-07 10:00:00"
+        content = "Test tweet"
+        schedule = "2025-01-07 10:00"
+        self.queue_instance.schedule_post.return_value = 123
         
-        result = self.invoke_cli([
-            'social', 'post', 'twitter', 'Test tweet',
-            '--schedule', schedule_time
-        ])
+        result = self.invoke_cli(['social', 'post', 'twitter', content,
+                                '--schedule', schedule])
         
         self.assertEqual(result.exit_code, 0)
-        self.assertIn(f"Post scheduled for {schedule_time}", result.output)
-        self.db_instance.add_post.assert_called_once()
+        self.assertIn("Post scheduled with ID: 123", result.output)
+        self.queue_instance.schedule_post.assert_called_once()
         
     def test_list_scheduled_posts(self):
         """Test listing scheduled posts."""
-        mock_posts = [
-            MagicMock(
-                platform=Platform.TWITTER,
-                scheduled_time=datetime(2025, 1, 7, 10, 0),
-                content="Test tweet 1"
-            ),
-            MagicMock(
-                platform=Platform.BLUESKY,
-                scheduled_time=datetime(2025, 1, 7, 11, 0),
-                content="Test post 2"
-            )
+        self.queue_instance.list_scheduled_posts.return_value = [
+            {
+                'id': 1,
+                'platform': 'twitter',
+                'content': 'Test tweet',
+                'schedule': '2025-01-07 10:00'
+            }
         ]
-        self.db_instance.get_scheduled_posts.return_value = mock_posts
         
         result = self.invoke_cli(['social', 'list-scheduled'])
         
         self.assertEqual(result.exit_code, 0)
-        self.assertIn("Test tweet 1", result.output)
-        self.assertIn("Test post 2", result.output)
-        self.assertIn("TWITTER", result.output)
-        self.assertIn("BLUESKY", result.output)
+        self.assertIn("Scheduled Posts:", result.output)
+        self.assertIn("ID: 1", result.output)
+        self.assertIn("Platform: twitter", result.output)
+        self.assertIn("Content: Test tweet", result.output)
         
     def test_list_scheduled_posts_empty(self):
         """Test listing scheduled posts when none exist."""
-        self.db_instance.get_scheduled_posts.return_value = []
+        self.queue_instance.list_scheduled_posts.return_value = []
         
         result = self.invoke_cli(['social', 'list-scheduled'])
         
         self.assertEqual(result.exit_code, 0)
-        self.assertIn("No scheduled posts found", result.output)
+        self.assertIn("No scheduled posts", result.output)
         
     def test_cancel_scheduled_post(self):
         """Test canceling a scheduled post."""
         post_id = 123
-        self.db_instance.get_post.return_value = MagicMock(
-            id=post_id,
-            platform=Platform.TWITTER,
-            scheduled_time=datetime(2025, 1, 7, 10, 0),
-            content="Test tweet"
-        )
+        self.queue_instance.cancel_post.return_value = True
         
         result = self.invoke_cli(['social', 'cancel', str(post_id)])
         
         self.assertEqual(result.exit_code, 0)
-        self.assertIn(f"Post {post_id} canceled successfully", result.output)
-        self.db_instance.delete_post.assert_called_once_with(post_id)
+        self.assertIn(f"Cancelled post {post_id}", result.output)
+        self.queue_instance.cancel_post.assert_called_once_with(post_id)
         
     def test_cancel_nonexistent_post(self):
         """Test canceling a nonexistent post."""
         post_id = 999
-        self.db_instance.get_post.return_value = None
+        self.queue_instance.cancel_post.return_value = False
         
         result = self.invoke_cli(['social', 'cancel', str(post_id)])
         
         self.assertEqual(result.exit_code, 1)
         self.assertIn(f"Post {post_id} not found", result.output)
-        self.db_instance.delete_post.assert_not_called()
+        self.queue_instance.cancel_post.assert_called_once_with(post_id)

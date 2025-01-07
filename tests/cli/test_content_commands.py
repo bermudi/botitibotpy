@@ -1,18 +1,14 @@
 """
-Tests for content management CLI commands.
+Tests for content generation CLI commands.
 """
 
 import unittest
-from pathlib import Path
 from unittest.mock import MagicMock, patch
-from click.testing import CliRunner
 
 from .test_base import BaseCliTest
-from src.content.generator import ContentGenerator
-from src.cli.cli import content
 
 class TestContentCommands(BaseCliTest):
-    """Test cases for content management commands."""
+    """Test cases for content generation commands."""
     
     def setUp(self):
         """Set up test environment."""
@@ -29,7 +25,7 @@ class TestContentCommands(BaseCliTest):
         
         self.assertEqual(result.exit_code, 0)
         self.assertIn("Generated content", result.output)
-        self.generator_instance.generate_post.assert_called_once()
+        self.generator_instance.generate_post.assert_called_once_with("Test prompt", max_length=None, tone='neutral')
         
     def test_generate_content_error(self):
         """Test content generation error handling."""
@@ -51,6 +47,7 @@ class TestContentCommands(BaseCliTest):
         result = self.invoke_cli(['content', 'list-sources'])
         
         self.assertEqual(result.exit_code, 0)
+        self.assertIn("Content Sources:", result.output)
         self.assertIn("source1.txt", result.output)
         self.assertIn("source2.txt", result.output)
         
@@ -73,8 +70,10 @@ class TestContentCommands(BaseCliTest):
         result = self.invoke_cli(['content', 'update-index'])
         
         self.assertEqual(result.exit_code, 0)
+        self.assertIn("Index Changes:", result.output)
         self.assertIn("Added: file1.txt", result.output)
         self.assertIn("Modified: file2.txt", result.output)
+        self.generator_instance.update_index.assert_called_once_with(dry_run=False)
         
     def test_update_index_dry_run(self):
         """Test updating content index in dry-run mode."""
@@ -86,5 +85,7 @@ class TestContentCommands(BaseCliTest):
         result = self.invoke_cli(['content', 'update-index', '--dry-run'])
         
         self.assertEqual(result.exit_code, 0)
+        self.assertIn("Index Changes:", result.output)
         self.assertIn("Would add: file1.txt", result.output)
         self.assertIn("Would modify: file2.txt", result.output)
+        self.generator_instance.update_index.assert_called_once_with(dry_run=True)
