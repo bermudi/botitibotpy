@@ -1,10 +1,108 @@
 from atproto import Client, client_utils
-from typing import Optional, Any
+from atproto_client.exceptions import RequestException, LoginRequiredError
+from typing import Optional, Any, Dict
 from ..config import Config
 from atproto_client.models.app.bsky.feed.get_author_feed import Params as AuthorFeedParams
 import logging
+import time
+import json
+from pathlib import Path
+from functools import wraps
 
 logger = logging.getLogger("botitibot.social.bluesky")
+
+def handle_rate_limit(func):
+    """Decorator to handle rate limit errors"""
+    @wraps(func)
+    def wrapper(self, *args, **kwargs):
+        max_retries = 3
+        base_delay = 1  # Base delay in seconds
+        
+        for attempt in range(max_retries):
+            try:
+                try:
+                    return func(self, *args, **kwargs)
+                except LoginRequiredError:
+                    logger.warning("Login required, attempting to re-authenticate", extra={
+                        'context': {
+                            'attempt': attempt + 1,
+                            'component': 'bluesky.auth'
+                        }
+                    })
+                    if self.setup_auth():
+                        continue
+                    raise
+            except RequestException as e:
+                if hasattr(e, 'response') and e.response.status_code == 429:
+                    headers = e.response.headers
+                    reset_time = int(headers.get('ratelimit-reset', 0))
+                    remaining = int(headers.get('ratelimit-remaining', 0))
+                    limit = int(headers.get('ratelimit-limit', 100))
+                    current_time = int(time.time())
+                    wait_time = max(1, reset_time - current_time)  # At least 1 second
+                    
+                    if attempt < max_retries - 1:
+                        logger.warning(f"Rate limit hit ({remaining}/{limit}), waiting {wait_time} seconds", extra={
+                            'context': {
+                                'wait_time': wait_time,
+                                'attempt': attempt + 1,
+                                'remaining': remaining,
+                                'limit': limit,
+                                'reset_time': reset_time,
+                                'current_time': current_time,
+                                'component': 'bluesky.rate_limit'
+                            }
+                        })
+                        time.sleep(wait_time)
+                        continue
+                    else:
+                        logger.error(f"Rate limit error after {max_retries} attempts", extra={
+                            'context': {
+                                'error': str(e),
+                                'wait_time': wait_time,
+                                'remaining': remaining,
+                                'limit': limit,
+                                'reset_time': reset_time,
+                                'current_time': current_time,
+                                'component': 'bluesky.rate_limit'
+                            }
+                        })
+                elif attempt < max_retries - 1:
+                    # For non-rate-limit errors, use exponential backoff
+                    delay = base_delay * (2 ** attempt)
+                    logger.warning(f"Request failed, retrying in {delay} seconds", extra={
+                        'context': {
+                            'error': str(e),
+                            'attempt': attempt + 1,
+                            'delay': delay,
+                            'component': 'bluesky.retry'
+                        }
+                    })
+                    time.sleep(delay)
+                    continue
+                raise
+            except Exception as e:
+                if attempt < max_retries - 1:
+                    # For other exceptions, also use exponential backoff
+                    delay = base_delay * (2 ** attempt)
+                    logger.warning(f"Operation failed, retrying in {delay} seconds", extra={
+                        'context': {
+                            'error': str(e),
+                            'attempt': attempt + 1,
+                            'delay': delay,
+                            'component': 'bluesky.retry'
+                        }
+                    })
+                    time.sleep(delay)
+                    continue
+                logger.error(f"Error in {func.__name__}: {str(e)}", extra={
+                    'context': {
+                        'error': str(e),
+                        'component': 'bluesky.error'
+                    }
+                })
+                raise
+    return wrapper
 
 class BlueskyClient:
     def __init__(self):
@@ -15,7 +113,16 @@ class BlueskyClient:
         })
         self.client = None
         self.profile = None
-    
+        
+        # Create data directory if it doesn't exist
+        self.data_dir = Path("data")
+        self.data_dir.mkdir(exist_ok=True)
+        self.session_file = self.data_dir / "bluesky_session.json"
+        
+        # Ensure session file is readable/writable only by owner
+        if self.session_file.exists():
+            self.session_file.chmod(0o600)
+            
     def __enter__(self):
         if not self.client:
             logger.debug("Creating new Bluesky client", extra={
@@ -39,19 +146,129 @@ class BlueskyClient:
         elif hasattr(self.client, '_session') and hasattr(self.client._session, 'close'):
             self.client._session.close()
     
+    def _load_session(self) -> Optional[Dict]:
+        """Load saved session data"""
+        try:
+            if self.session_file.exists():
+                with open(self.session_file, 'r') as f:
+                    session = json.load(f)
+                    logger.debug("Loaded existing session", extra={
+                        'context': {
+                            'component': 'bluesky.auth'
+                        }
+                    })
+                    return session
+        except Exception as e:
+            logger.error(f"Error loading session: {str(e)}", extra={
+                'context': {
+                    'error': str(e),
+                    'component': 'bluesky.auth'
+                }
+            })
+        return None
+    
+    def _save_session(self, session: Dict) -> None:
+        """Save session data"""
+        try:
+            # Create parent directory if it doesn't exist
+            self.session_file.parent.mkdir(parents=True, exist_ok=True)
+            
+            # Write session data with secure permissions
+            with open(self.session_file, 'w') as f:
+                json.dump(session, f)
+            self.session_file.chmod(0o600)  # Read/write for owner only
+            
+            logger.debug("Saved session data", extra={
+                'context': {
+                    'session_file': str(self.session_file),
+                    'component': 'bluesky.auth'
+                }
+            })
+        except Exception as e:
+            logger.error(f"Error saving session: {str(e)}", extra={
+                'context': {
+                    'error': str(e),
+                    'session_file': str(self.session_file),
+                    'component': 'bluesky.auth'
+                }
+            })
+    
+    def _cleanup_session(self) -> None:
+        """Clean up invalid session data"""
+        try:
+            if self.session_file.exists():
+                self.session_file.unlink()
+                logger.debug("Removed invalid session file", extra={
+                    'context': {
+                        'component': 'bluesky.auth'
+                    }
+                })
+        except Exception as e:
+            logger.error(f"Error cleaning up session: {str(e)}", extra={
+                'context': {
+                    'error': str(e),
+                    'component': 'bluesky.auth'
+                }
+            })
+    
+    @handle_rate_limit
     def setup_auth(self) -> bool:
         """Authenticate with Bluesky using credentials from config"""
         try:
-            logger.debug("Attempting Bluesky authentication", extra={
+            # Try to load existing session
+            logger.debug("Attempting to load existing session", extra={
+                'context': {
+                    'session_file': str(self.session_file),
+                    'component': 'bluesky.auth'
+                }
+            })
+            session = self._load_session()
+            if session:
+                try:
+                    self.client = Client()
+                    self.client.session = session
+                    # Verify session is still valid
+                    self.profile = self.client.get_profile()
+                    logger.info(f"Successfully restored session for: {self.profile.display_name}", extra={
+                        'context': {
+                            'display_name': self.profile.display_name,
+                            'component': 'bluesky.auth'
+                        }
+                    })
+                    return True
+                except Exception as e:
+                    logger.warning(f"Saved session invalid: {str(e)}", extra={
+                        'context': {
+                            'error': str(e),
+                            'component': 'bluesky.auth'
+                        }
+                    })
+                    self._cleanup_session()
+                    # Add delay before retrying
+                    time.sleep(5)
+            
+            # Create new session
+            logger.debug("Creating new session", extra={
                 'context': {
                     'identifier': Config.BLUESKY_IDENTIFIER,
                     'component': 'bluesky.auth'
                 }
             })
+            self.client = Client()  # Create new client instance
             self.profile = self.client.login(
                 Config.BLUESKY_IDENTIFIER,
                 Config.BLUESKY_PASSWORD
             )
+            
+            # Save new session
+            logger.debug("Saving new session", extra={
+                'context': {
+                    'session_file': str(self.session_file),
+                    'component': 'bluesky.auth'
+                }
+            })
+            self._save_session(self.client.session)
+            
             logger.info(f"Successfully logged in as: {self.profile.display_name}", extra={
                 'context': {
                     'display_name': self.profile.display_name,
@@ -66,8 +283,12 @@ class BlueskyClient:
                     'component': 'bluesky.auth'
                 }
             })
+            self._cleanup_session()
+            # Add delay before next attempt
+            time.sleep(5)
             return False
     
+    @handle_rate_limit
     def post_content(self, content: str, link: Optional[str] = None) -> Optional[Any]:
         """Post content to Bluesky with optional link"""
         try:

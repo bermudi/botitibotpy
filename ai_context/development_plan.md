@@ -31,10 +31,12 @@
   - [x] Setup and configuration
   - [x] Basic prompt handling
   - [x] Content generation pipeline using LlamaIndex, ChromaDB, OpenAI, and Gemini
-- [?] Content customization
+- [ ] Content customization
   - [x] Length control
   - [x] Tone adjustment
   - [x] Style parameters
+  - [ ] Content source management methods (list_sources, update_index)
+  - [ ] Proper content source loading mechanism
 
 ### Phase 3: Content Source Integration
 - [x] Web Page Parser
@@ -45,6 +47,10 @@
   - [x] Feed parser setup
   - [x] Content aggregation
   - [x] Update monitoring
+- [ ] Content Source Management
+  - [ ] Source listing functionality
+  - [ ] Index updating and maintenance
+  - [ ] Source validation and error handling
 
 ### Phase 4: Database & Persistence
 - [x] SQLite setup
@@ -58,7 +64,7 @@
   - [x] Database operations for CRUD operations (DatabaseOperations class)
 
 ### Phase 5: Scheduling & Automation
-- [x] Task Scheduler
+- [ ] Task Scheduler
   - [x] Content generation scheduling (60-minute intervals)
   - [x] Posting schedule management
   - [x] Reply checking automation (5-minute intervals)
@@ -66,6 +72,8 @@
   - [x] Configurable scheduling intervals
   - [x] Task queue management (QueueManager class)
   - [x] Task scheduling for content generation, reply checking, and metrics collection (TaskScheduler class)
+  - [ ] Fix async/event loop handling in CLI commands
+  - [ ] Proper error handling for scheduling operations
 - [x] Metrics Collection
   - [x] Basic engagement tracking
   - [x] Automated collection (10-minute intervals)
@@ -114,24 +122,24 @@
   - [x] Command-line argument parsing
   - [x] Configuration management via CLI
   - [x] Interactive mode
-- [x] Content Management Commands
-  - [x] Generate content manually
-  - [x] List/view generated content
-  - [x] Test content generation with different parameters
-- [x] Social Media Management
+- [ ] Content Management Commands
+  - [ ] Generate content manually (needs fixes)
+  - [ ] List/view generated content (needs implementation)
+  - [ ] Test content generation with different parameters
+- [ ] Social Media Management
   - [x] Platform authentication setup
-  - [x] Manual post creation/scheduling
-  - [x] View scheduled posts
-  - [x] Cancel/modify scheduled posts
+  - [ ] Manual post creation/scheduling (needs async fixes)
+  - [ ] View scheduled posts (needs async fixes)
+  - [ ] Cancel/modify scheduled posts
 - [x] System Management
   - [x] Start/stop scheduler
   - [x] View active tasks
   - [x] View system status
   - [x] Basic monitoring commands
-- [x] Testing Utilities
-  - [x] Mock post generation
-  - [x] Dry-run capabilities
-  - [x] Performance testing tools
+- [ ] Async Operation Handling
+  - [ ] Proper event loop management
+  - [ ] Async command execution
+  - [ ] Error handling for async operations
 
 ### Phase 7: API Implementation
 - [ ] Core API Setup

@@ -683,3 +683,174 @@ class ContentGenerator:
                 }
             })
             return (0, 0)
+
+    def list_sources(self) -> List[Dict[str, Any]]:
+        """List all content sources and their status.
+        
+        Returns:
+            List[Dict[str, Any]]: List of content sources with metadata
+        """
+        try:
+            logger.debug("Listing content sources", extra={
+                'context': {
+                    'component': 'content_generator.sources'
+                }
+            })
+            
+            sources = []
+            # Get all documents from ChromaDB
+            docs = self.chroma_collection.get()
+            
+            # Group documents by source
+            source_groups = {}
+            for i, doc_id in enumerate(docs['ids']):
+                metadata = docs['metadatas'][i]
+                source_type = metadata.get('source_type', 'unknown')
+                source_id = metadata.get('file_path', metadata.get('url', metadata.get('feed_url', 'unknown')))
+                
+                if source_id not in source_groups:
+                    source_groups[source_id] = {
+                        'id': source_id,
+                        'type': source_type,
+                        'document_count': 0,
+                        'last_updated': None,
+                        'metadata': metadata
+                    }
+                source_groups[source_id]['document_count'] += 1
+                
+                # Track most recent update
+                timestamp = metadata.get('timestamp')
+                if timestamp:
+                    if not source_groups[source_id]['last_updated'] or timestamp > source_groups[source_id]['last_updated']:
+                        source_groups[source_id]['last_updated'] = timestamp
+            
+            sources = list(source_groups.values())
+            logger.info(f"Found {len(sources)} content sources", extra={
+                'context': {
+                    'source_count': len(sources),
+                    'component': 'content_generator.sources'
+                }
+            })
+            return sources
+            
+        except Exception as e:
+            logger.error(f"Error listing content sources: {str(e)}", exc_info=True, extra={
+                'context': {
+                    'component': 'content_generator.sources'
+                }
+            })
+            return []
+
+    def update_index(self, dry_run: bool = False) -> List[Dict[str, Any]]:
+        """Update the content index by checking all sources for changes.
+        
+        Args:
+            dry_run: If True, only report what would be updated without making changes
+            
+        Returns:
+            List[Dict[str, Any]]: List of changes made or that would be made
+        """
+        try:
+            logger.info("Starting index update", extra={
+                'context': {
+                    'dry_run': dry_run,
+                    'component': 'content_generator.index'
+                }
+            })
+            
+            changes = []
+            sources = self.list_sources()
+            
+            for source in sources:
+                try:
+                    source_id = source['id']
+                    source_type = source['type']
+                    
+                    logger.debug(f"Checking source: {source_id}", extra={
+                        'context': {
+                            'source_id': source_id,
+                            'source_type': source_type,
+                            'component': 'content_generator.index'
+                        }
+                    })
+                    
+                    if source_type == 'webpage':
+                        if not dry_run:
+                            success = self.add_webpage_to_index(source_id)
+                            if success:
+                                changes.append({
+                                    'type': 'update',
+                                    'source_id': source_id,
+                                    'source_type': source_type
+                                })
+                        else:
+                            changes.append({
+                                'type': 'would_update',
+                                'source_id': source_id,
+                                'source_type': source_type
+                            })
+                            
+                    elif source_type == 'rss':
+                        if not dry_run:
+                            new_entries, failed = self.monitor_rss_feed(source_id)
+                            if new_entries > 0:
+                                changes.append({
+                                    'type': 'update',
+                                    'source_id': source_id,
+                                    'source_type': source_type,
+                                    'new_entries': new_entries,
+                                    'failed_entries': failed
+                                })
+                        else:
+                            changes.append({
+                                'type': 'would_update',
+                                'source_id': source_id,
+                                'source_type': source_type
+                            })
+                            
+                    elif source_type == 'file':
+                        if not dry_run:
+                            directory = os.path.dirname(source_id)
+                            if self.load_content_source(directory):
+                                changes.append({
+                                    'type': 'update',
+                                    'source_id': source_id,
+                                    'source_type': source_type
+                                })
+                        else:
+                            changes.append({
+                                'type': 'would_update',
+                                'source_id': source_id,
+                                'source_type': source_type
+                            })
+                            
+                except Exception as e:
+                    logger.error(f"Error updating source {source_id}: {str(e)}", exc_info=True, extra={
+                        'context': {
+                            'source_id': source_id,
+                            'error': str(e),
+                            'component': 'content_generator.index'
+                        }
+                    })
+                    changes.append({
+                        'type': 'error',
+                        'source_id': source_id,
+                        'error': str(e)
+                    })
+            
+            logger.info(f"Index update complete with {len(changes)} changes", extra={
+                'context': {
+                    'change_count': len(changes),
+                    'dry_run': dry_run,
+                    'component': 'content_generator.index'
+                }
+            })
+            return changes
+            
+        except Exception as e:
+            logger.error(f"Error updating index: {str(e)}", exc_info=True, extra={
+                'context': {
+                    'component': 'content_generator.index'
+                }
+            })
+            return [{'type': 'error', 'error': str(e)}]

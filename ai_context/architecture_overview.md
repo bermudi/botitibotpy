@@ -33,14 +33,17 @@ This directory contains the `generator.py` file, which implements content genera
     -   Integrates Gemini embeddings for vector search using `GeminiEmbedding`
     -   Supports direct prompts using `direct_prompt` and RAG-based generation using `generate_post`
     -   Configurable content parameters (length, tone, style) using `_build_generation_prompt`
--   **Content Management**:
+-   **Content Management** (Needs Implementation):
     -   Persistent vector storage using ChromaDB with `chromadb.PersistentClient`
     -   Document change tracking with content hashing using `_calculate_document_hash`
     -   Support for multiple content sources:
         -   Directory-based content loading using `SimpleDirectoryReader` and `load_content_source`
         -   Web page content parsing using `load_webpage` and `load_webpage_batch`
         -   RSS feed monitoring using `parse_rss_feed` and `monitor_rss_feed`
-    -   Automatic content updates and indexing
+    -   Missing functionality:
+        -   Content source listing (`list_sources` method)
+        -   Index updating (`update_index` method)
+        -   Proper content source loading mechanism
 
 ### `src/database/`
 
@@ -129,18 +132,22 @@ This directory contains files for scheduling and managing tasks:
 
 This directory contains the command-line interface for the application:
 
--   `cli.py`: Implements the CLI using `click`:
+-   `cli.py`: Implements the CLI using `click` (Needs Updates):
     -   Provides commands for content generation, social media management, and system control
     -   Includes options for debugging and specifying parameters
     -   Uses `ContentGenerator`, `QueueManager`, `TaskScheduler`, `SystemMonitoring`, `TwitterClient`, and `BlueskyClient`
-    -   **Content Commands**:
+    -   Known Issues:
+        -   Async operations not properly handled
+        -   Runtime warnings about module loading
+        -   Missing proper error handling for async commands
+    -   **Content Commands** (Needs Fixes):
         -   `generate`: Generates content based on a prompt, length, and tone
-        -   `list-sources`: Lists available content sources
-        -   `update-index`: Updates the content source index
-    -   **Social Commands**:
+        -   `list-sources`: Lists available content sources (not implemented)
+        -   `update-index`: Updates the content source index (not implemented)
+    -   **Social Commands** (Needs Fixes):
         -   `auth`: Authenticates with a social media platform
-        -   `post`: Posts content to a social media platform, with optional scheduling
-        -   `list-scheduled`: Lists all scheduled posts
+        -   `post`: Posts content to a social media platform, with optional scheduling (async issues)
+        -   `list-scheduled`: Lists all scheduled posts (async issues)
         -   `cancel`: Cancels a scheduled post
     -   **System Commands**:
         -   `status`: View system status and active tasks
@@ -157,12 +164,15 @@ This directory contains platform-specific clients:
     -   Comprehensive error handling and logging
     -   Platform-specific API adaptations
     -   Provides methods for posting content (`post_content`), fetching timeline (`get_timeline`), fetching tweet threads (`get_tweet_thread`), liking tweets (`like_tweet`), replying to tweets (`reply_to_tweet`), and fetching author feed (`get_author_feed`)
--   `bluesky.py`: Bluesky client using `atproto`:
+-   `bluesky.py`: Bluesky client using `atproto` (Needs Updates):
     -   Context manager-based resource management using context manager
     -   Structured logging for operations
     -   Support for posts with links
     -   Timeline and thread retrieval
-    -   Provides methods for posting content (`post_content`), fetching timeline (`get_timeline`), fetching post threads (`get_post_thread`), liking posts (`like_post`), and replying to posts (`reply_to_post`)
+    -   Missing functionality:
+        -   Post method implementation
+        -   Proper error handling for async operations
+    -   Provides methods for fetching timeline (`get_timeline`), fetching post threads (`get_post_thread`), liking posts (`like_post`), and replying to posts (`reply_to_post`)
 
 ## Overall Architecture
 

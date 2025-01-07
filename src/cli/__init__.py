@@ -1,9 +1,4 @@
-"""
-Command Line Interface for Botitibot.
-
-This module provides a comprehensive CLI for managing and interacting with the Botitibot system.
-It includes commands for content management, social media operations, and system administration.
-"""
+"""CLI module for Botitibot."""
 
 from .cli import main
 

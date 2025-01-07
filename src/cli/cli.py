@@ -5,87 +5,39 @@ Main CLI implementation for Botitibot.
 import sys
 import click
 import logging
+import asyncio
 from pathlib import Path
 from datetime import datetime
 from typing import Optional
+from functools import update_wrapper
 
 from ..config import Config
 from ..content.generator import ContentGenerator
 from ..database.operations import DatabaseOperations
 from ..scheduler.task_scheduler import TaskScheduler
-from ..scheduler.queue_manager import QueueManager
+from ..scheduler.queue_manager import QueueManager, Task, TaskPriority
 from ..monitoring.system import SystemMonitoring
 from ..social.twitter import TwitterClient
 from ..social.bluesky import BlueskyClient
 
 logger = logging.getLogger(__name__)
 
+def async_command(f):
+    """Decorator to run async commands"""
+    @click.pass_context
+    def wrapper(ctx, *args, **kwargs):
+        return asyncio.run(f(*args, **kwargs))
+    return update_wrapper(wrapper, f)
+
 @click.group()
-@click.option('--debug/--no-debug', default=False, help='Enable debug logging')
-def main(debug: bool) -> None:
-    """Botitibot CLI - Social Media Content Management and Automation"""
-    log_level = logging.DEBUG if debug else logging.INFO
-    logging.basicConfig(level=log_level)
-
-@main.group()
-def content():
-    """Content management commands"""
-    pass
-
-@content.command()
-@click.option('--prompt', '-p', required=True, help='Content generation prompt')
-@click.option('--length', '-l', default='medium', type=click.Choice(['short', 'medium', 'long']))
-@click.option('--tone', '-t', default='neutral', type=click.Choice(['casual', 'neutral', 'formal']))
-def generate(prompt: str, length: str, tone: str) -> None:
-    """Generate content manually using specified parameters"""
-    try:
-        generator = ContentGenerator()
-        content = generator.generate_post(prompt, max_length=None, tone=tone)
-        if content:
-            click.echo(f"Generated content:\n{content}")
-        else:
-            click.echo("Failed to generate content", err=True)
-            sys.exit(1)
-    except Exception as e:
-        logger.error(f"Error generating content: {e}")
-        click.echo(f"Error: {str(e)}", err=True)
-        sys.exit(1)
-
-@content.command(name='list-sources')
-def list_sources() -> None:
-    """List available content sources"""
-    try:
-        generator = ContentGenerator()
-        sources = generator.list_sources()
-        if sources:
-            click.echo("\nContent Sources:")
-            for source in sources:
-                click.echo(f"- {source}")
-        else:
-            click.echo("No content sources registered")
-    except Exception as e:
-        logger.error(f"Error listing sources: {e}")
-        click.echo(f"Error: {str(e)}", err=True)
-        sys.exit(1)
-
-@content.command(name='update-index')
-@click.option('--dry-run', is_flag=True, help='Show what would be updated without making changes')
-def update_index(dry_run: bool) -> None:
-    """Update content source index"""
-    try:
-        generator = ContentGenerator()
-        changes = generator.update_index(dry_run=dry_run)
-        if changes:
-            click.echo("\nIndex Changes:")
-            for change in changes:
-                click.echo(f"- {change}")
-        else:
-            click.echo("No changes to index")
-    except Exception as e:
-        logger.error(f"Error updating index: {e}")
-        click.echo(f"Error: {str(e)}", err=True)
-        sys.exit(1)
-
+@click.option('--debug', is_flag=True, help='Enable debug logging')
+def main(debug):
+    """Botitibot CLI"""
+    if debug:
+        logging.basicConfig(level=logging.DEBUG)
+    else:
+        logging.basicConfig(level=logging.INFO)
+        
 @main.group()
 def social():
     """Social media management commands"""
@@ -93,25 +45,31 @@ def social():
 
 @social.command()
 @click.argument('platform', type=click.Choice(['twitter', 'bluesky']))
-def auth(platform: str) -> None:
+def auth(platform):
     """Authenticate with a social media platform"""
     try:
-        if platform == 'twitter':
-            client = TwitterClient()
-            click.echo("Successfully authenticated with twitter")
-        elif platform == 'bluesky':
-            client = BlueskyClient()
-            click.echo("Successfully authenticated with bluesky")
+        if platform == 'bluesky':
+            with BlueskyClient() as client:
+                if client.setup_auth():
+                    click.echo("Successfully authenticated with bluesky")
+                else:
+                    click.echo("Failed to authenticate with bluesky")
+        elif platform == 'twitter':
+            with TwitterClient() as client:
+                if client.setup_auth():
+                    click.echo("Successfully authenticated with twitter")
+                else:
+                    click.echo("Failed to authenticate with twitter")
     except Exception as e:
-        logger.error(f"Error authenticating with {platform}: {e}")
-        click.echo(f"Error: {str(e)}", err=True)
+        click.echo(f"Error authenticating with {platform}: {str(e)}")
         sys.exit(1)
 
-@social.command()
+@social.command(name='post')
 @click.argument('platform', type=click.Choice(['twitter', 'bluesky']))
 @click.argument('content')
 @click.option('--schedule', '-s', help='Schedule post for future (format: YYYY-MM-DD HH:MM)')
-def post(platform: str, content: str, schedule: Optional[str] = None) -> None:
+@async_command
+async def post(platform: str, content: str, schedule: Optional[str] = None) -> None:
     """Post content to a social media platform"""
     try:
         if schedule:
@@ -122,37 +80,68 @@ def post(platform: str, content: str, schedule: Optional[str] = None) -> None:
                 sys.exit(1)
                 
             queue = QueueManager()
-            post_id = queue.schedule_post(platform, content, schedule_time)
-            click.echo(f"Post scheduled with ID: {post_id}")
+            await queue.start()
+            try:
+                if platform == 'twitter':
+                    client = TwitterClient()
+                    task = Task(
+                        id=f"post_{datetime.now().timestamp()}",
+                        priority=TaskPriority.MEDIUM,
+                        created_at=datetime.now(),
+                        coroutine=client.post_content,
+                        args=(content,)
+                    )
+                else:
+                    client = BlueskyClient()
+                    task = Task(
+                        id=f"post_{datetime.now().timestamp()}",
+                        priority=TaskPriority.MEDIUM,
+                        created_at=datetime.now(),
+                        coroutine=client.post_content,
+                        args=(content,)
+                    )
+                post_id = await queue.add_task(task)
+                click.echo(f"Post scheduled with ID: {post_id}")
+            finally:
+                await queue.shutdown()
         else:
             if platform == 'twitter':
                 client = TwitterClient()
-                client.post(content)
+                client.post_content(content)
                 click.echo("Posted to Twitter successfully")
             elif platform == 'bluesky':
-                client = BlueskyClient()
-                client.post(content)
-                click.echo("Posted to Bluesky successfully")
+                with BlueskyClient() as client:
+                    result = client.post_content(content)
+                    if result:
+                        click.echo("Posted to Bluesky successfully")
+                    else:
+                        click.echo("Failed to post to Bluesky", err=True)
+                        sys.exit(1)
     except Exception as e:
         logger.error(f"Error posting to {platform}: {e}")
         click.echo(f"Error: {str(e)}", err=True)
         sys.exit(1)
 
 @social.command(name='list-scheduled')
-def list_scheduled_posts() -> None:
+@async_command
+async def list_scheduled_posts() -> None:
     """List all scheduled posts"""
     try:
         queue = QueueManager()
-        posts = queue.list_scheduled_posts()
-        if posts:
-            click.echo("\nScheduled Posts:")
-            for post in posts:
-                click.echo(f"ID: {post['id']}")
-                click.echo(f"Platform: {post['platform']}")
-                click.echo(f"Content: {post['content']}")
-                click.echo(f"Schedule: {post['schedule']}\n")
-        else:
-            click.echo("No scheduled posts")
+        await queue.start()
+        try:
+            status = await queue.get_queue_status()
+            if status['queued_tasks'] > 0:
+                click.echo("\nScheduled Posts:")
+                for task in queue.task_queue:
+                    click.echo(f"ID: {task.id}")
+                    click.echo(f"Priority: {task.priority.name}")
+                    click.echo(f"Created: {task.created_at}")
+                    click.echo("")
+            else:
+                click.echo("No scheduled posts")
+        finally:
+            await queue.shutdown()
     except Exception as e:
         logger.error(f"Error listing scheduled posts: {e}")
         click.echo(f"Error: {str(e)}", err=True)
@@ -160,15 +149,20 @@ def list_scheduled_posts() -> None:
 
 @social.command()
 @click.argument('post_id', type=int)
-def cancel(post_id: int) -> None:
+@async_command
+async def cancel(post_id: int) -> None:
     """Cancel a scheduled post"""
     try:
         queue = QueueManager()
-        if queue.cancel_post(post_id):
-            click.echo(f"Cancelled post {post_id}")
-        else:
-            click.echo(f"Post {post_id} not found", err=True)
-            sys.exit(1)
+        await queue.start()
+        try:
+            if await queue.cancel_task(str(post_id)):
+                click.echo(f"Cancelled post {post_id}")
+            else:
+                click.echo(f"Post {post_id} not found", err=True)
+                sys.exit(1)
+        finally:
+            await queue.shutdown()
     except Exception as e:
         logger.error(f"Error cancelling post: {e}")
         click.echo(f"Error: {str(e)}", err=True)
