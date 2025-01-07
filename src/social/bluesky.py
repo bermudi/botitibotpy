@@ -39,7 +39,9 @@ def handle_rate_limit(func):
                     remaining = int(headers.get('ratelimit-remaining', 0))
                     limit = int(headers.get('ratelimit-limit', 100))
                     current_time = int(time.time())
-                    wait_time = max(1, reset_time - current_time)  # At least 1 second
+                    
+                    # Calculate wait time based on rate limit reset
+                    wait_time = max(reset_time - current_time, 1)  # At least 1 second
                     
                     if attempt < max_retries - 1:
                         logger.warning(f"Rate limit hit ({remaining}/{limit}), waiting {wait_time} seconds", extra={
@@ -67,6 +69,7 @@ def handle_rate_limit(func):
                                 'component': 'bluesky.rate_limit'
                             }
                         })
+                        raise
                 elif attempt < max_retries - 1:
                     # For non-rate-limit errors, use exponential backoff
                     delay = base_delay * (2 ** attempt)
