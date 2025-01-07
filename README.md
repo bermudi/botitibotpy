@@ -26,11 +26,15 @@ This Bot provides a Python-based solution for generating and managing social med
     - Timeline and feed fetching
     - Engagement tracking
     - Automated responses
-*   **Task Scheduling:**
-    - Automated content generation (60-min intervals)
-    - Reply checking (5-min intervals)
-    - Metrics collection (10-min intervals)
+*   **Social Media Posting:** The bot can create posts on Bluesky, Instagram and Twitter.
+*   **Timeline Fetching:** The bot can fetch timelines from Bluesky, Instagram and Twitter.
+*   **Author Feed Fetching:** The bot can fetch the author's feed from Bluesky, Instagram and Twitter.
+*   **Comment Management:** The bot can create and fetch comments on Bluesky, Instagram and Twitter.
+*   **Social Media Interaction:** The bot automatically checks for comments on uploaded content and replies to it when running
+*   **Real-time Communication:** The bot server backend uses WebSockets for real-time communication with the client application.
 *   **Error Handling:** Comprehensive logging and retry mechanisms
+*   **Bluesky Integration:** Uses the `atproto.blue` library for interacting with the Bluesky API.
+*   **Twitter Integration:** Uses the `twitter-openapi-python` library for interacting with the Twitter API.
 
 ## Architecture
 
@@ -104,133 +108,3 @@ BLUESKY_IDENTIFIER=your_identifier
 BLUESKY_PASSWORD=your_password
 ```
 
-# twitter_openapi_python
-
-## Setup
-
-```shell
-pip install twitter-openapi-python
-```
-
-## Usage
-
-```python
-import json
-import datetime
-
-from pathlib import Path
-from tweepy_authlib import CookieSessionUserHandler
-from twitter_openapi_python import TwitterOpenapiPython
-
-# login by tweepy_authlib
-if Path("cookie.json").exists():
-    with open("cookie.json", "r") as f:
-        cookies_dict = json.load(f)
-        if isinstance(cookies_dict, list):
-            cookies_dict = {k["name"]: k["value"] for k in cookies_dict}
-else:
-    auth_handler = CookieSessionUserHandler(
-        screen_name=input("screen_name: "),
-        password=input("password: "),
-    )
-    cookies_dict = auth_handler.get_cookies().get_dict()
-
-# To extract cookies from Windows (Linux by default)
-# If you use tweepy_authlib, you must be on Windows
-client = TwitterOpenapiPython()
-client.additional_api_headers = {
-    "sec-ch-ua-platform": '"Windows"',
-}
-client.additional_browser_headers = {
-    "sec-ch-ua-platform": '"Windows"',
-}
-
-# get client from cookies
-client = client.get_client_from_cookies(cookies=cookies_dict)
-
-# tweet "Hello World!!" with current time
-time = datetime.datetime.now().strftime("%Y-%m-%dT%H:%M:%SZ")
-client.get_post_api().post_create_tweet(tweet_text=f"Hello World!!{time}")
-
-# get user info
-response = client.get_user_api().get_user_by_screen_name("elonmusk")
-```
-
-### Login
-
-```python
-import json
-from pathlib import Path
-
-from requests.cookies import RequestsCookieJar
-from tweepy_authlib import CookieSessionUserHandler
-
-
-def login():
-    if Path("cookie.json").exists():
-        with open("cookie.json", "r") as f:
-            cookies_dict = json.load(f)
-        cookies = RequestsCookieJar()
-        for key, value in cookies_dict.items():
-            cookies.set(key, value)
-        return CookieSessionUserHandler(cookies=cookies)
-    else:
-        auth_handler = CookieSessionUserHandler(
-            screen_name=input("screen_name: "),
-            password=input("password: "),
-        )
-        cookies = auth_handler.get_cookies()
-        with open("cookie.json", "w") as f:
-            json.dump(cookies.get_dict(), f, ensure_ascii=False, indent=4)
-        return auth_handler
-```
-
-### User
-
-```
-import os
-import urllib.request
-from pathlib import Path
-from urllib.parse import urlparse
-
-import login as login
-from twitter_openapi_python import TwitterOpenapiPython
-
-cookies_dict = login.login().get_cookies().get_dict()
-client = TwitterOpenapiPython().get_client_from_cookies(cookies=cookies_dict)
-screen_name = "elonmusk"
-user_response = client.get_user_api().get_user_by_screen_name(
-    screen_name=screen_name,
-)
-
-print(f"rate_limit_remaining: {user_response.header.rate_limit_remaining}")
-elonmusk = user_response.data.user
-print(f"screen_name: {elonmusk.legacy.screen_name}")
-print(f"friends_count: {elonmusk.legacy.friends_count}")
-print(f"followers_count: {elonmusk.legacy.followers_count}")
-
-os.makedirs("media", exist_ok=True)
-
-
-url = urlparse(elonmusk.legacy.profile_image_url_https)
-ext = os.path.splitext(url.path)[1]
-data = urllib.request.urlopen(elonmusk.legacy.profile_image_url_https).read()
-os.makedirs("media", exist_ok=True)
-with open(Path("media", screen_name + ext), mode="wb+") as f:
-    f.write(data)
-```
-
-
-### Tweet
-
-```python
-import datetime
-
-import login as login
-from twitter_openapi_python import TwitterOpenapiPython
-
-cookies_dict = login.login().get_cookies().get_dict()
-client = TwitterOpenapiPython().get_client_from_cookies(cookies=cookies_dict)
-
-time = datetime.datetime.now().strftime("%Y-%m-%dT%H:%M:%SZ")
-client.get_post_api().post_create_tweet(tweet_text=f"Hello World!!{time}")

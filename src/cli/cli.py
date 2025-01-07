@@ -342,5 +342,23 @@ def metrics() -> None:
         click.echo(f"Error: {str(e)}", err=True)
         sys.exit(1)
 
+
+@main.group()
+def content_management():
+    """Content management commands"""
+    pass
+
+@content_management.command()
+def list_content_sources():
+    """List all content sources"""
+    # TODO: Implement list content sources
+    pass
+
+@content_management.command()
+def remove_content_source():
+    """Remove a content source"""
+    # TODO: Implement remove content source
+    pass
+
 if __name__ == '__main__':
     main()
