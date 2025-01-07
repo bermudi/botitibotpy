@@ -275,12 +275,17 @@ class TestTaskScheduler(unittest.IsolatedAsyncioTestCase):
         """Test stopping all tasks"""
         # Arrange
         async def mock_coro():
-            pass
-        
+            try:
+                # Make sure task runs long enough to test cancellation
+                await asyncio.sleep(1)
+            except asyncio.CancelledError:
+                # Properly handle cancellation
+                raise
+
         mock_task1 = asyncio.create_task(mock_coro())
         mock_task2 = asyncio.create_task(mock_coro())
         mock_task3 = asyncio.create_task(mock_coro())
-        
+
         self.task_scheduler.tasks = {
             'content_generation': mock_task1,
             'reply_checking': mock_task2,

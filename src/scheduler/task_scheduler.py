@@ -153,14 +153,21 @@ class TaskScheduler:
             }
         })
         
+        # Make a copy first, so we don't mutate the dict while iterating
         tasks_to_cancel = list(self.tasks.values())
+        
+        # Cancel all tasks first
         for task in tasks_to_cancel:
             task.cancel()
+
+        # Now await them to ensure they're properly cancelled
+        for task in tasks_to_cancel:
             try:
                 await task
             except asyncio.CancelledError:
                 pass
                 
+        # Clear the dictionary only after all tasks are cancelled
         self.tasks.clear()
 
     async def _handle_platform_error(self, platform: str, error: Exception) -> bool:
@@ -173,11 +180,12 @@ class TaskScheduler:
         Returns:
             bool: True if error was handled, False otherwise
         """
+        error_str = str(error).lower()
         logger.error(f"Platform error occurred", exc_info=True, extra={
             'context': {
                 'platform': platform,
                 'error_type': type(error).__name__,
-                'error': str(error),
+                'error': error_str,
                 'component': 'task_scheduler.handle_platform_error'
             }
         })
@@ -194,7 +202,7 @@ class TaskScheduler:
             return True
             
         # Handle unauthorized errors
-        if str(error).lower().startswith('unauthorized'):
+        if "unauthorized" in error_str:
             logger.error("Unauthorized access", extra={
                 'context': {
                     'platform': platform,
@@ -209,7 +217,7 @@ class TaskScheduler:
             return True
             
         # Handle not found errors
-        if str(error).lower().startswith('not found'):
+        if "not found" in error_str:
             logger.warning("Resource not found", extra={
                 'context': {
                     'platform': platform,
@@ -219,6 +227,12 @@ class TaskScheduler:
             return True
             
         # Unknown errors should not disable the platform
+        if platform == 'twitter':
+            logger.debug(f"Twitter enabled after error? {self.config.twitter.enabled}", extra={
+                'context': {
+                    'component': 'task_scheduler.handle_platform_error'
+                }
+            })
         return False
 
     async def _schedule_content_generation(self):
