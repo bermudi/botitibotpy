@@ -91,6 +91,8 @@ class TaskScheduler:
             'reply_check': new_config.reply_check_interval,
             'metrics_update': new_config.metrics_update_interval
         })
+        # Update queue manager's max concurrent tasks
+        self.queue_manager.max_concurrent_tasks = new_config.max_concurrent_tasks
 
     def update_interval(self, task_type: str, minutes: int):
         """Update the interval for a specific task type"""
@@ -142,7 +144,7 @@ class TaskScheduler:
             })
             raise
 
-    def stop(self):
+    async def stop(self):
         """Stop all running tasks"""
         logger.info("Stopping all scheduled tasks", extra={
             'context': {
@@ -151,11 +153,26 @@ class TaskScheduler:
             }
         })
         
-        for task in self.tasks.values():
+        tasks_to_cancel = list(self.tasks.values())
+        for task in tasks_to_cancel:
             task.cancel()
+            try:
+                await task
+            except asyncio.CancelledError:
+                pass
+                
+        self.tasks.clear()
 
-    def _handle_platform_error(self, platform: str, error: Exception) -> bool:
-        """Handle platform-specific errors"""
+    async def _handle_platform_error(self, platform: str, error: Exception) -> bool:
+        """Handle platform-specific errors
+        
+        Args:
+            platform: Platform name (twitter or bluesky)
+            error: Exception that occurred
+            
+        Returns:
+            bool: True if error was handled, False otherwise
+        """
         logger.error(f"Platform error occurred", exc_info=True, extra={
             'context': {
                 'platform': platform,
@@ -165,6 +182,7 @@ class TaskScheduler:
             }
         })
         
+        # Handle rate limit errors
         if isinstance(error, RateLimitError):
             logger.warning("Rate limit hit", extra={
                 'context': {
@@ -175,6 +193,32 @@ class TaskScheduler:
             })
             return True
             
+        # Handle unauthorized errors
+        if str(error).lower().startswith('unauthorized'):
+            logger.error("Unauthorized access", extra={
+                'context': {
+                    'platform': platform,
+                    'component': 'task_scheduler.handle_platform_error'
+                }
+            })
+            # Disable the platform only for unauthorized errors
+            if platform == 'twitter':
+                self.config.twitter.enabled = False
+            elif platform == 'bluesky':
+                self.config.bluesky.enabled = False
+            return True
+            
+        # Handle not found errors
+        if str(error).lower().startswith('not found'):
+            logger.warning("Resource not found", extra={
+                'context': {
+                    'platform': platform,
+                    'component': 'task_scheduler.handle_platform_error'
+                }
+            })
+            return True
+            
+        # Unknown errors should not disable the platform
         return False
 
     async def _schedule_content_generation(self):
@@ -232,7 +276,19 @@ class TaskScheduler:
         
         while True:
             try:
-                await self._collect_all_metrics()
+                # Get recent posts from the last 24 hours
+                posts = await self.db_ops.get_recent_posts(hours=24)
+                logger.info("Retrieved recent posts", extra={
+                    'context': {
+                        'post_count': len(posts),
+                        'component': 'task_scheduler.schedule_metrics_collection'
+                    }
+                })
+                
+                # Collect metrics for each post
+                for post in posts:
+                    await self._collect_post_metrics(post)
+                    
             except Exception as e:
                 logger.error("Error in metrics collection cycle", exc_info=True, extra={
                     'context': {
@@ -251,7 +307,7 @@ class TaskScheduler:
             }
         })
         
-        content = await self.content_generator.generate_content()
+        content = await self.content_generator.generate_post()
         if not content:
             logger.warning("No content generated", extra={
                 'context': {
@@ -275,7 +331,7 @@ class TaskScheduler:
                 if post_id:
                     post_ids[platform] = post_id
             except Exception as e:
-                if not self._handle_platform_error(platform.name.lower(), e):
+                if not await self._handle_platform_error(platform.name.lower(), e):
                     raise
                     
         return post_ids
