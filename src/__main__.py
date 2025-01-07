@@ -1,7 +1,7 @@
-"""Main entry point for the CLI."""
+"""Main entry point for Botitibot."""
 
 import sys
-from . import main
+from .cli import main
 
 def run_cli():
     """Run the CLI application."""

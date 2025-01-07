@@ -222,6 +222,118 @@
   - [ ] Resource usage tracking
   - [ ] System health monitoring
 
+### CLI Commands Status
+
+#### Content Management Commands
+- `content generate`: ⚠️ Needs Testing - Depends on ContentGenerator.generate_post() implementation
+- `content add-webpage`: ⚠️ Needs Testing - Depends on ContentGenerator.load_webpage() implementation
+- `content add-rss`: ⚠️ Needs Testing - Depends on ContentGenerator.parse_rss_feed() implementation
+- `content add-directory`: ⚠️ Needs Testing - Depends on ContentGenerator.load_content_source() implementation
+- `content list-sources`: ⚠️ Needs Testing - Depends on ContentGenerator.list_sources() implementation
+- `content remove-source`: ⚠️ Needs Testing - Depends on ContentGenerator.remove_source() implementation
+- `content update-index`: ⚠️ Needs Testing - Depends on ContentGenerator.update_index() implementation
+
+#### Social Media Commands
+- `social auth`: ⚠️ Needs Testing - Depends on platform client auth implementations
+- `social post`: 🔄 Partially Tested - Basic posting works, scheduled posting needs testing
+- `social list-scheduled`: 🔄 Partially Tested - Basic listing works, needs more edge case testing
+- `social cancel`: 🔄 Partially Tested - Basic cancellation works, needs more edge case testing
+- `social author-feed`: ⚠️ Needs Testing - Depends on platform client implementations
+- `social comment`: ⚠️ Needs Testing - Depends on platform client implementations
+- `social view-comments`: ⚠️ Needs Testing - Depends on platform client implementations
+- `social like`: ⚠️ Needs Testing - Depends on platform client implementations
+- `social engagement`: ⚠️ Needs Testing - Depends on DatabaseOperations.get_post_metrics() implementation
+
+#### System Management Commands
+- `system status`: ⚠️ Needs Testing - Depends on SystemMonitoring implementation
+- `system start`: ⚠️ Needs Testing - Depends on TaskScheduler implementation
+- `system stop`: ⚠️ Needs Testing - Depends on TaskScheduler implementation
+- `system metrics`: ⚠️ Needs Testing - Depends on SystemMonitoring.get_metrics_summary() implementation
+- `system set-check-interval`: ⚠️ Needs Testing - Depends on TaskScheduler.update_interval() implementation
+- `system platform-status`: ⚠️ Needs Testing - Depends on platform client rate limit implementations
+
+#### Testing Status
+1. Commands Fully Tested: None
+2. Commands Partially Tested:
+   - `social post` (basic posting)
+   - `social list-scheduled` (basic listing)
+   - `social cancel` (basic cancellation)
+3. Commands Needing Testing: All others
+4. Dependencies Needing Implementation/Testing:
+   - ContentGenerator methods
+   - Platform client methods
+   - SystemMonitoring methods
+   - TaskScheduler methods
+   - DatabaseOperations methods
+
+#### Known Issues
+1. Async Operations:
+   - Some commands might have event loop issues in certain environments
+   - Need to ensure proper cleanup of async resources
+
+2. Database Integration:
+   - Some commands need proper error handling for database connection issues
+   - Need to ensure database sessions are properly closed
+
+3. Platform-Specific:
+   - Twitter API operations need testing with rate limits
+   - Bluesky API operations need testing with actual credentials
+
+4. Content Generation:
+   - Need to implement proper error handling for LLM API failures
+   - Need to handle token limits in content generation
+
+#### Required Fixes
+1. Content Management:
+   - Implement missing methods in ContentGenerator class
+   - Add proper error handling for content source operations
+
+2. Social Media:
+   - Add retry mechanisms for API failures
+   - Implement proper rate limit handling
+   - Add tests for all platform operations
+
+3. System Management:
+   - Implement proper metrics collection
+   - Add system resource monitoring
+   - Add alert configuration
+
+4. General:
+   - Add command-level logging
+   - Improve error messages
+   - Add command usage examples
+   - Add command-level tests
+
+#### Next Steps
+1. Create comprehensive test suite for CLI commands
+2. Implement missing ContentGenerator methods
+3. Add proper error handling and recovery
+4. Add command usage documentation
+5. Add integration tests for database operations
+6. Add platform-specific tests
+7. Improve async operation handling
+
+#### Testing Plan
+1. Unit Tests:
+   - Create test fixtures for each command
+   - Mock dependencies (database, APIs, etc.)
+   - Test error handling paths
+
+2. Integration Tests:
+   - Test database interactions
+   - Test file system operations
+   - Test async operations
+
+3. Platform Tests:
+   - Create test accounts for Twitter and Bluesky
+   - Test rate limiting behavior
+   - Test auth flows
+   - Test content operations
+
+4. System Tests:
+   - Test scheduler operations
+   - Test monitoring functionality
+   - Test resource usage tracking
 
 ## Current Status
 - Completed basic infrastructure and social media integration

@@ -67,27 +67,9 @@ def generate(prompt: str, length: int, tone: str, style: str):
     """Generate content using the specified parameters"""
     try:
         generator = ContentGenerator()
-        
-        # Load content sources and index
-        if not generator.load_content_source("content_sources"):
-            logger.error("Failed to load content sources")
-            click.echo("Error: Failed to load content sources", err=True)
-            sys.exit(1)
-            
-        # Load the index
-        if not generator.load_index():
-            logger.error("Failed to load index")
-            click.echo("Error: Failed to load index", err=True)
-            sys.exit(1)
-            
-        # Generate content
         content = generator.generate_post(prompt, max_length=length, tone=tone, style=style)
-        if content:
-            click.echo("\nGenerated Content:")
-            click.echo(content)
-        else:
-            click.echo("Error: Failed to generate content", err=True)
-            sys.exit(1)
+        click.echo("\nGenerated Content:")
+        click.echo(content)
     except Exception as e:
         logger.error(f"Error generating content: {e}")
         click.echo(f"Error: {str(e)}", err=True)
@@ -552,4 +534,4 @@ def platform_status(platform: str):
         sys.exit(1)
 
 if __name__ == '__main__':
-    main()
+    main() 

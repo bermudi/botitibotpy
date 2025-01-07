@@ -1,5 +1,5 @@
 """CLI module for Botitibot."""
 
-from .cli import main
+from .cli import main, content, social, system
 
-__all__ = ['main']
+__all__ = ['main', 'content', 'social', 'system']
