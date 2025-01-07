@@ -14,11 +14,20 @@ from ..database.models import Platform, Post
 logger = logging.getLogger(__name__)
 
 @dataclass
+class PlatformConfig:
+    enabled: bool = True
+    retry_limit: int = 3
+    rate_limit_window: int = 15 * 60  # 15 minutes in seconds
+    max_requests_per_window: int = 100
+
+@dataclass
 class SchedulerConfig:
     content_generation_interval: int = 60  # minutes
     reply_check_interval: int = 5  # minutes
     metrics_update_interval: int = 10  # minutes
     max_concurrent_tasks: int = 5
+    twitter: PlatformConfig = PlatformConfig()
+    bluesky: PlatformConfig = PlatformConfig()
 
 class TaskScheduler:
     def __init__(self, db: Session, config: Optional[SchedulerConfig] = None, log_level: int = logging.INFO):
@@ -44,9 +53,43 @@ class TaskScheduler:
         # Initialize queue manager
         self.queue_manager = QueueManager(max_concurrent_tasks=self.config.max_concurrent_tasks)
         
-        # Track running tasks
+        # Track running tasks and intervals
         self.tasks: Dict[str, asyncio.Task] = {}
+        self.intervals: Dict[str, int] = {
+            'content_generation': self.config.content_generation_interval,
+            'reply_check': self.config.reply_check_interval,
+            'metrics_update': self.config.metrics_update_interval
+        }
         
+    def update_config(self, new_config: SchedulerConfig):
+        """Update scheduler configuration
+        
+        Args:
+            new_config: New configuration to apply
+        """
+        logger.info("Updating scheduler configuration")
+        self.config = new_config
+        self.queue_manager.max_concurrent_tasks = new_config.max_concurrent_tasks
+        
+    def update_interval(self, task_type: str, minutes: int):
+        """Update the interval for a specific task type
+        
+        Args:
+            task_type: Type of task to update ('content_generation', 'reply_check', or 'metrics_update')
+            minutes: New interval in minutes
+        """
+        if task_type not in self.intervals:
+            raise ValueError(f"Unknown task type: {task_type}")
+        
+        self.intervals[task_type] = minutes
+        logger.info(f"Updated {task_type} interval to {minutes} minutes")
+        
+        # Restart the task if it's running
+        if task_type in self.tasks:
+            task = self.tasks[task_type]
+            task.cancel()
+            self.tasks[task_type] = asyncio.create_task(self._get_scheduler_for_type(task_type)())
+
     async def start(self):
         """Start all scheduled tasks"""
         logger.info("Starting scheduled tasks")
@@ -71,16 +114,34 @@ class TaskScheduler:
         await asyncio.gather(*self.tasks.values(), return_exceptions=True)
         self.tasks.clear()
         
-    def update_config(self, new_config: SchedulerConfig):
-        """Update scheduler configuration
+    async def _handle_platform_error(self, platform: str, error: Exception) -> bool:
+        """Handle platform-specific errors
         
         Args:
-            new_config: New configuration to apply
+            platform: Platform where error occurred ('twitter' or 'bluesky')
+            error: The error that occurred
+            
+        Returns:
+            bool: True if error was handled, False if it should be re-raised
         """
-        logger.info("Updating scheduler configuration")
-        self.config = new_config
-        self.queue_manager.max_concurrent_tasks = new_config.max_concurrent_tasks
+        platform_config = getattr(self.config, platform)
         
+        if isinstance(error, RateLimitError):
+            logger.warning(f"{platform} rate limit hit. Waiting {error.retry_after} seconds")
+            return True
+            
+        elif str(error).lower().find("unauthorized") != -1:
+            logger.error(f"{platform} authentication error: {str(error)}")
+            # Disable the platform temporarily
+            platform_config.enabled = False
+            return True
+            
+        elif str(error).lower().find("not found") != -1:
+            logger.warning(f"{platform} resource not found: {str(error)}")
+            return True
+            
+        return False
+
     async def _schedule_content_generation(self):
         """Schedule periodic content generation and posting"""
         while True:
@@ -92,7 +153,8 @@ class TaskScheduler:
                     id=f"content_gen_{datetime.now().timestamp()}",
                     priority=TaskPriority.HIGH,
                     created_at=datetime.now(),
-                    coroutine=self._generate_and_post_content
+                    coroutine=self._generate_and_post_content,
+                    max_retries=3
                 )
                 
                 await self.queue_manager.add_task(task)
@@ -100,9 +162,9 @@ class TaskScheduler:
             except Exception as e:
                 logger.error(f"Error in content generation cycle: {str(e)}", exc_info=True)
                 
-            # Wait for next cycle
-            await asyncio.sleep(self.config.content_generation_interval * 60)
-            
+            # Wait for next interval
+            await asyncio.sleep(self.intervals['content_generation'] * 60)
+
     async def _schedule_reply_checking(self):
         """Schedule periodic checking and handling of replies"""
         while True:
@@ -122,8 +184,8 @@ class TaskScheduler:
             except Exception as e:
                 logger.error(f"Error in reply check cycle: {str(e)}", exc_info=True)
                 
-            # Wait for next cycle
-            await asyncio.sleep(self.config.reply_check_interval * 60)
+            # Wait for next interval
+            await asyncio.sleep(self.intervals['reply_check'] * 60)
             
     async def _schedule_metrics_collection(self):
         """Schedule periodic collection of engagement metrics"""
@@ -144,9 +206,18 @@ class TaskScheduler:
             except Exception as e:
                 logger.error(f"Error in metrics collection cycle: {str(e)}", exc_info=True)
                 
-            # Wait for next cycle
-            await asyncio.sleep(self.config.metrics_update_interval * 60)
+            # Wait for next interval
+            await asyncio.sleep(self.intervals['metrics_update'] * 60)
             
+    def _get_scheduler_for_type(self, task_type: str):
+        """Get the scheduler coroutine for a task type"""
+        schedulers = {
+            'content_generation': self._schedule_content_generation,
+            'reply_check': self._schedule_reply_checking,
+            'metrics_update': self._schedule_metrics_collection
+        }
+        return schedulers[task_type]
+
     async def _generate_and_post_content(self):
         """Generate and post content to all platforms"""
         # Generate content
@@ -248,27 +319,33 @@ class TaskScheduler:
             return "post_id"  # Replace with actual post ID from response
             
         except Exception as e:
-            logger.error(f"Error posting to {platform.value}: {str(e)}")
-            return None
-            
+            if await self._handle_platform_error(platform.value.lower(), e):
+                return None
+            else:
+                raise
+                
     async def _reply_on_twitter(self, comment_id: str, content: str) -> Optional[str]:
         """Post a reply on Twitter"""
         try:
             self.twitter_client.reply_to_tweet(comment_id, content)
             return "reply_id"  # Replace with actual reply ID
         except Exception as e:
-            logger.error(f"Error replying on Twitter: {str(e)}")
-            return None
-            
+            if await self._handle_platform_error('twitter', e):
+                return None
+            else:
+                raise
+                
     async def _reply_on_bluesky(self, comment_id: str, content: str) -> Optional[str]:
         """Post a reply on Bluesky"""
         try:
             self.bluesky_client.reply_to_post(comment_id, content)
             return "reply_id"  # Replace with actual reply ID
         except Exception as e:
-            logger.error(f"Error replying on Bluesky: {str(e)}")
-            return None
-            
+            if await self._handle_platform_error('bluesky', e):
+                return None
+            else:
+                raise
+                
     def _get_recent_posts(self) -> List[Post]:
         """Get posts from the last 24 hours"""
         return self.db_ops.get_recent_posts(hours=24)
