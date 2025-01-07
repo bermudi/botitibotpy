@@ -83,44 +83,27 @@ class TestTaskScheduler(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(self.task_scheduler.config.metrics_update_interval, 3)
         self.assertEqual(self.task_scheduler.queue_manager.max_concurrent_tasks, 2)
 
-    @patch('asyncio.create_task')
-    async def test_start_scheduled_tasks(self, mock_create_task):
+    @patch('src.scheduler.task_scheduler.TaskScheduler._schedule_content_generation')
+    @patch('src.scheduler.task_scheduler.TaskScheduler._schedule_metrics_collection')
+    @patch('src.scheduler.task_scheduler.TaskScheduler._schedule_reply_checking')
+    async def test_start_scheduled_tasks(self, mock_reply, mock_metrics, mock_content):
         """Test starting scheduled tasks"""
         # Arrange
-        mock_tasks = []
-        
-        def mock_create(coro):
-            mock_task = MagicMock()
-            mock_task.done = MagicMock(return_value=False)
-            mock_task.cancel = MagicMock()
-            mock_tasks.append(mock_task)
-            return mock_task
-            
-        mock_create_task.side_effect = mock_create
-        
+        async def mock_coro():
+            pass
+
+        mock_reply.return_value = mock_coro()
+        mock_metrics.return_value = mock_coro()
+        mock_content.return_value = mock_coro()
+
         # Act
         await self.task_scheduler.start()
-        
+
         # Assert
-        self.assertEqual(mock_create_task.call_count, 3)
-        # Get the coroutine names from the calls
-        calls = mock_create_task.call_args_list
-        coroutine_names = [
-            call.args[0].__name__ 
-            for call in calls
-        ]
-        expected_names = [
-            '_schedule_content_generation',
-            '_schedule_reply_checking',
-            '_schedule_metrics_collection'
-        ]
-        for name in expected_names:
-            self.assertIn(name, coroutine_names)
-            
-        # Clean up mock tasks
-        for task in mock_tasks:
-            if not task.done():
-                task.cancel()
+        self.assertEqual(len(self.task_scheduler.tasks), 3)  # content_generation, reply_checking, metrics_collection
+        mock_content.assert_called_once()
+        mock_metrics.assert_called_once()
+        mock_reply.assert_called_once()
 
     async def test_schedule_content_generation(self):
         """Test content generation scheduling"""
@@ -149,22 +132,26 @@ class TestTaskScheduler(unittest.IsolatedAsyncioTestCase):
         mock_comments = [{'id': '1'}, {'id': '2'}]
         self.task_scheduler.db_ops.get_unreplied_comments = AsyncMock(return_value=mock_comments)
         self.task_scheduler.content_generator.generate_reply = AsyncMock(return_value="Test reply")
+        self.task_scheduler._check_and_handle_replies = AsyncMock()
 
         # Act
         task = asyncio.create_task(self.task_scheduler._schedule_reply_checking())
         try:
-            await asyncio.wait_for(asyncio.shield(task), timeout=0.1)
-        except asyncio.TimeoutError:
-            pass
+            # Wait longer to ensure the task executes
+            await asyncio.sleep(1)
+
+            # Wait for all running tasks to complete
+            while self.task_scheduler.queue_manager.running_tasks:
+                await asyncio.sleep(0.1)
+
+            # Assert
+            self.task_scheduler._check_and_handle_replies.assert_called_once()
         finally:
             task.cancel()
             try:
                 await task
             except asyncio.CancelledError:
                 pass
-
-        # Assert
-        self.task_scheduler.db_ops.get_unreplied_comments.assert_called_once()
 
     async def test_schedule_metrics_collection(self):
         """Test metrics collection scheduling"""

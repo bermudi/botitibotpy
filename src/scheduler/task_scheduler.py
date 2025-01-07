@@ -176,36 +176,43 @@ class TaskScheduler:
             raise Exception("Content generation failed")
             
     async def _check_and_handle_replies(self):
-        """Check for and handle any unreplied comments"""
+        """Check for new replies and generate responses"""
         try:
-            comments = await self.db_ops.get_unreplied_comments()
-            for comment in comments:
-                try:
-                    reply_content = self.content_generator.direct_prompt(
-                        f"Generate a friendly and engaging reply to this comment: {comment.content}"
-                    )
-                    if reply_content:
-                        # Post reply based on platform
-                        if comment.platform == Platform.TWITTER:
-                            reply_id = await self._reply_on_twitter(
-                                comment.platform_comment_id,
-                                reply_content
-                            )
-                        else:  # Bluesky
-                            reply_id = await self._reply_on_bluesky(
-                                comment.platform_comment_id,
-                                reply_content
-                            )
+            # Get recent posts
+            posts = await self._get_recent_posts()
+            
+            for post in posts:
+                # Convert dict to object if needed
+                post_id = post.get('id') if isinstance(post, dict) else post.id
+                platform = post.get('platform') if isinstance(post, dict) else post.platform
+                
+                # Get new comments
+                if platform == Platform.TWITTER:
+                    comments = await self.twitter_client.get_new_comments(post_id)
+                elif platform == Platform.BLUESKY:
+                    comments = await self.bluesky_client.get_new_comments(post_id)
+                else:
+                    continue
+
+                # Process each comment
+                for comment in comments:
+                    try:
+                        # Convert dict to object if needed
+                        comment_content = comment.get('content') if isinstance(comment, dict) else comment.content
+                        comment_id = comment.get('id') if isinstance(comment, dict) else comment.id
+                        
+                        # Generate and post reply
+                        prompt = f"Generate a friendly and engaging reply to this comment: {comment_content}"
+                        reply = await self.content_generator.generate_reply(prompt)
+                        
+                        if platform == Platform.TWITTER:
+                            await self.twitter_client.post_reply(comment_id, reply)
+                        elif platform == Platform.BLUESKY:
+                            await self.bluesky_client.post_reply(comment_id, reply)
                             
-                        if reply_id:
-                            # Mark comment as replied
-                            self.db_ops.mark_comment_replied(
-                                comment.id,
-                                reply_id,
-                                reply_content
-                            )
-                except Exception as e:
-                    logger.error(f"Error handling reply for comment {comment.id}: {str(e)}", exc_info=True)
+                    except Exception as e:
+                        logger.error(f"Error handling reply for comment {comment_id}: {str(e)}", exc_info=True)
+
         except Exception as e:
             logger.error(f"Error checking replies: {str(e)}", exc_info=True)
             
@@ -266,35 +273,26 @@ class TaskScheduler:
         """Get posts from the last 24 hours"""
         return self.db_ops.get_recent_posts(hours=24)
         
-    async def _collect_post_metrics(self, post: Post) -> Optional[Dict[str, int]]:
-        """Collect engagement metrics for a post
-        
-        Returns:
-            Optional[Dict[str, int]]: Dictionary containing metrics if successful
-        """
+    async def _collect_post_metrics(self, post):
+        """Collect metrics for a single post"""
         try:
-            if post.platform == Platform.TWITTER:
-                # Get Twitter metrics
-                thread = self.twitter_client.get_tweet_thread(post.platform_post_id)
-                if thread:
-                    return {
-                        'likes': 0,  # Extract from thread
-                        'replies': 0,
-                        'reposts': 0,
-                        'views': 0
-                    }
-            else:  # Bluesky
-                # Get Bluesky metrics
-                thread = self.bluesky_client.get_post_thread(post.platform_post_id)
-                if thread:
-                    return {
-                        'likes': 0,  # Extract from thread
-                        'replies': 0,
-                        'reposts': 0
-                    }
-                    
-            return None
-            
+            # Convert dict to object if needed
+            if isinstance(post, dict):
+                post_id = post.get('id')
+                platform = post.get('platform')
+            else:
+                post_id = post.id
+                platform = post.platform
+
+            if platform == Platform.TWITTER:
+                metrics = await self.twitter_client.get_post_metrics(post_id)
+            elif platform == Platform.BLUESKY:
+                metrics = await self.bluesky_client.get_post_metrics(post_id)
+            else:
+                logger.warning(f"Unknown platform for post {post_id}")
+                return None
+
+            return metrics
         except Exception as e:
-            logger.error(f"Error collecting metrics for post {post.id}: {str(e)}")
+            logger.error(f"Error collecting metrics for post {post_id}: {str(e)}")
             return None
