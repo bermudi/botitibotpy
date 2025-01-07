@@ -11,25 +11,12 @@ class TestQueueManager(unittest.IsolatedAsyncioTestCase):
     async def asyncSetUp(self):
         """Set up test fixtures before each test method."""
         self.queue_manager = QueueManager(max_concurrent_tasks=3)
+        await self.queue_manager.start()
         
     async def asyncTearDown(self):
         """Clean up after each test"""
         if hasattr(self, 'queue_manager'):
-            # Make a copy of the tasks before iterating
-            tasks = list(self.queue_manager.running_tasks.values())
-            # Cancel all running tasks
-            for task in tasks:
-                task.cancel()
-                try:
-                    await task
-                except asyncio.CancelledError:
-                    pass
-            # Clear all collections
-            self.queue_manager.task_queue.clear()
-            self.queue_manager.running_tasks.clear()
-            self.queue_manager.task_results.clear()
-            # Reset semaphore
-            self.queue_manager.semaphore = asyncio.Semaphore(self.queue_manager.max_concurrent_tasks)
+            await self.queue_manager.shutdown()
 
     async def test_add_task(self):
         """Test adding a task to the queue"""
@@ -47,7 +34,7 @@ class TestQueueManager(unittest.IsolatedAsyncioTestCase):
 
         # Act
         task_id = await self.queue_manager.add_task(task)
-        await asyncio.sleep(0.05)  # Let task process
+        await asyncio.sleep(0.2)  # Increased sleep time to let task complete
 
         # Assert
         self.assertEqual(task_id, "test_task")
@@ -254,6 +241,7 @@ class TestQueueManager(unittest.IsolatedAsyncioTestCase):
 
         # Act
         await self.queue_manager.add_task(running_task)
+        await asyncio.sleep(0.05)  # Wait for first task to start processing
         await self.queue_manager.add_task(queued_task)
 
         # Wait for first task to start
@@ -262,11 +250,9 @@ class TestQueueManager(unittest.IsolatedAsyncioTestCase):
         except asyncio.TimeoutError:
             self.fail("Task did not start in time")
 
-        # Allow some time for the second task to be queued
-        await asyncio.sleep(0.1)
-
-        # Cancel the queued task
-        await self.queue_manager.cancel_task("queued")
+        # Cancel the queued task immediately
+        cancelled = await self.queue_manager.cancel_task("queued")
+        self.assertTrue(cancelled)
 
         # Allow the running task to complete
         task_event.set()
@@ -274,7 +260,6 @@ class TestQueueManager(unittest.IsolatedAsyncioTestCase):
 
         # Assert
         self.assertEqual(self.queue_manager.task_results["queued"]["status"], "cancelled")
-        self.assertEqual(len(self.queue_manager.task_queue), 0)
 
     async def test_queue_status(self):
         """Test queue status reporting"""

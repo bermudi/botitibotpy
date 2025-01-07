@@ -6,6 +6,7 @@ from datetime import datetime, timedelta
 from enum import Enum
 import heapq
 from .exceptions import RateLimitError
+from collections import defaultdict
 
 logger = logging.getLogger(__name__)
 
@@ -55,6 +56,43 @@ class QueueManager:
         self.cancelled_tasks = set()  # Track cancelled tasks
         self.queue_lock = asyncio.Lock()  # Lock for queue operations
         self.rate_limit_delays: Dict[str, datetime] = {}  # Track rate limit delays by platform
+        self._shutdown = False
+        self._queue_processor = None
+        
+        # Start queue processor
+        self._queue_processor = asyncio.create_task(self._process_queue())
+            
+    async def start(self):
+        """Start the queue processor"""
+        if self._queue_processor is None:
+            self._shutdown = False
+            self._queue_processor = asyncio.create_task(self._process_queue())
+            
+    async def shutdown(self):
+        """Shutdown the queue processor and cleanup resources"""
+        self._shutdown = True
+        if self._queue_processor:
+            self._queue_processor.cancel()
+            try:
+                await self._queue_processor
+            except asyncio.CancelledError:
+                pass
+            self._queue_processor = None
+            
+        # Cancel all running tasks
+        tasks = list(self.running_tasks.values())
+        for task in tasks:
+            task.cancel()
+            try:
+                await task
+            except asyncio.CancelledError:
+                pass
+                
+        # Clear collections
+        self.task_queue.clear()
+        self.running_tasks.clear()
+        self._task_results.clear()
+        self.cancelled_tasks.clear()
         
     async def add_task(self, task: Task) -> str:
         """Add a task to the queue"""
@@ -80,41 +118,56 @@ class QueueManager:
         return task.id
         
     async def cancel_task(self, task_id: str) -> bool:
-        """Cancel a task"""
+        """Cancel a task by ID
+
+        Args:
+            task_id: ID of task to cancel
+
+        Returns:
+            bool: True if task was cancelled, False otherwise
+        """
         logger.info("Attempting to cancel task", extra={
             'context': {
                 'task_id': task_id,
                 'component': 'queue_manager.cancel_task'
             }
         })
-        
-        # Check if task is running
+
+        # First check if task is running
         if task_id in self.running_tasks:
-            self.running_tasks[task_id].cancel()
-            self.cancelled_tasks.add(task_id)
-            logger.info("Cancelled running task", extra={
+            logger.info("Cancelling running task", extra={
                 'context': {
                     'task_id': task_id,
                     'component': 'queue_manager.cancel_task'
                 }
             })
+            self.cancelled_tasks.add(task_id)
+            self.running_tasks[task_id].cancel()
+            self._task_results[task_id] = {
+                'status': 'cancelled',
+                'result': None,
+                'retries': 0
+            }
             return True
-            
-        # Check if task is in queue
+
+        # Then check if task is in queue
         async with self.queue_lock:
-            for i, task in enumerate(self.task_queue):
+            for task in self.task_queue:
                 if task.id == task_id:
-                    self.task_queue.pop(i)
-                    heapq.heapify(self.task_queue)
-                    self.cancelled_tasks.add(task_id)
-                    logger.info("Cancelled queued task", extra={
+                    logger.info("Cancelling queued task", extra={
                         'context': {
                             'task_id': task_id,
                             'component': 'queue_manager.cancel_task'
                         }
                     })
+                    self.cancelled_tasks.add(task_id)
+                    self._task_results[task_id] = {
+                        'status': 'cancelled',
+                        'result': None,
+                        'retries': task.retries
+                    }
                     return True
-                    
+
         logger.warning("Task not found for cancellation", extra={
             'context': {
                 'task_id': task_id,
@@ -122,7 +175,50 @@ class QueueManager:
             }
         })
         return False
-        
+
+    async def _process_queue(self):
+        """Process tasks in the queue"""
+        while not self._shutdown:
+            if not self.task_queue:
+                await asyncio.sleep(0.1)  # Reduced sleep time for faster processing
+                continue
+
+            async with self.queue_lock:
+                if not self.task_queue:
+                    continue
+
+                # Skip if we've reached max concurrent tasks
+                if len(self.running_tasks) >= self.max_concurrent_tasks:
+                    await asyncio.sleep(0.1)
+                    continue
+
+                task = heapq.heappop(self.task_queue)
+
+                # Skip cancelled tasks
+                if task.id in self.cancelled_tasks:
+                    logger.info("Skipping cancelled task", extra={
+                        'context': {
+                            'task_id': task.id,
+                            'component': 'queue_manager.process_queue'
+                        }
+                    })
+                    continue
+
+                logger.debug("Processing task from queue", extra={
+                    'context': {
+                        'task_id': task.id,
+                        'queue_size': len(self.task_queue),
+                        'component': 'queue_manager.process_queue'
+                    }
+                })
+
+                # Create and store task
+                task_future = asyncio.create_task(self._execute_task(task))
+                self.running_tasks[task.id] = task_future
+
+            # Wait a short time to allow other tasks to be queued
+            await asyncio.sleep(0.01)
+
     async def _execute_task(self, task: Task):
         """Execute a task and handle any errors"""
         try:
@@ -133,20 +229,52 @@ class QueueManager:
                     'component': 'queue_manager.execute_task'
                 }
             })
-            
+
+            # Check if task was cancelled before execution
+            if task.id in self.cancelled_tasks:
+                self._task_results[task.id] = {
+                    'status': 'cancelled',
+                    'result': None,
+                    'retries': task.retries
+                }
+                return
+
             async with self.semaphore:
                 if task.kwargs is None:
                     task.kwargs = {}
+
+                # Check again for cancellation
+                if task.id in self.cancelled_tasks:
+                    self._task_results[task.id] = {
+                        'status': 'cancelled',
+                        'result': None,
+                        'retries': task.retries
+                    }
+                    return
+
                 result = await task.coroutine(*task.args, **task.kwargs)
-                self._task_results[task.id] = result
-                
+
+                # Final cancellation check
+                if task.id in self.cancelled_tasks:
+                    self._task_results[task.id] = {
+                        'status': 'cancelled',
+                        'result': None,
+                        'retries': task.retries
+                    }
+                else:
+                    self._task_results[task.id] = {
+                        'status': 'completed',
+                        'result': result,
+                        'retries': task.retries
+                    }
+
                 logger.info("Task completed successfully", extra={
                     'context': {
                         'task_id': task.id,
                         'component': 'queue_manager.execute_task'
                     }
                 })
-                
+
         except RateLimitError as e:
             logger.warning("Rate limit hit, scheduling retry", extra={
                 'context': {
@@ -155,8 +283,14 @@ class QueueManager:
                     'component': 'queue_manager.execute_task'
                 }
             })
+            self._task_results[task.id] = {
+                'status': 'rate_limited',
+                'result': None,
+                'retries': task.retries,
+                'error': str(e)
+            }
             await self._schedule_retry(task, e.retry_after)
-            
+
         except Exception as e:
             logger.error("Task execution failed", exc_info=True, extra={
                 'context': {
@@ -165,8 +299,14 @@ class QueueManager:
                     'component': 'queue_manager.execute_task'
                 }
             })
-            
+
             if task.retries < task.max_retries:
+                self._task_results[task.id] = {
+                    'status': 'retrying',
+                    'result': None,
+                    'error': str(e),
+                    'retries': task.retries
+                }
                 delay = 2 ** task.retries  # Exponential backoff
                 await self._schedule_retry(task, delay)
             else:
@@ -177,7 +317,15 @@ class QueueManager:
                         'component': 'queue_manager.execute_task'
                     }
                 })
-                self._task_results[task.id] = None
+                self._task_results[task.id] = {
+                    'status': 'failed',
+                    'result': None,
+                    'error': str(e),
+                    'retries': task.retries + 1  # Include the last attempt
+                }
+        finally:
+            if task.id in self.running_tasks:
+                del self.running_tasks[task.id]
                 
     async def _schedule_retry(self, task: Task, delay: int):
         """Schedule a task for retry after delay seconds"""
@@ -192,98 +340,62 @@ class QueueManager:
         })
         
         await asyncio.sleep(delay)
-        async with self.queue_lock:
-            heapq.heappush(self.task_queue, task)
-            
-    async def _process_queue(self):
-        """Process tasks in the queue"""
-        while True:
-            if not self.task_queue:
-                await asyncio.sleep(1)
-                continue
-                
+        if task.id not in self.cancelled_tasks:
             async with self.queue_lock:
-                if not self.task_queue:
-                    continue
-                task = heapq.heappop(self.task_queue)
+                heapq.heappush(self.task_queue, task)
                 
-            logger.debug("Processing task from queue", extra={
-                'context': {
-                    'task_id': task.id,
-                    'queue_size': len(self.task_queue),
-                    'component': 'queue_manager.process_queue'
-                }
-            })
-            
-            # Skip cancelled tasks
-            if task.id in self.cancelled_tasks:
-                logger.info("Skipping cancelled task", extra={
-                    'context': {
-                        'task_id': task.id,
-                        'component': 'queue_manager.process_queue'
-                    }
-                })
-                continue
-                
-            # Create task
-            self.running_tasks[task.id] = asyncio.create_task(self._execute_task(task))
-            
     @property
     def task_results(self) -> Dict[str, Any]:
         """Get task results dictionary"""
         return self._task_results
         
     def get_task_status(self, task_id: str) -> Optional[Dict[str, Any]]:
-        """Get the status of a task"""
-        status = {
-            'id': task_id,
-            'status': 'unknown',
-            'result': None
-        }
-        
-        # Check if task is running
-        if task_id in self.running_tasks:
-            status['status'] = 'running'
-            
-        # Check if task is completed
-        elif task_id in self._task_results:
-            status['status'] = 'completed'
-            status['result'] = self._task_results[task_id]
-            
-        # Check if task is cancelled
-        elif task_id in self.cancelled_tasks:
-            status['status'] = 'cancelled'
-            
-        # Check if task is queued
-        else:
-            for task in self.task_queue:
-                if task.id == task_id:
-                    status['status'] = 'queued'
-                    status['retries'] = task.retries
-                    break
-                    
-        logger.debug("Retrieved task status", extra={
-            'context': {
-                'task_id': task_id,
-                'status': status['status'],
-                'component': 'queue_manager.get_task_status'
+        """Get the status of a specific task
+
+        Args:
+            task_id: ID of task to get status for
+
+        Returns:
+            Dict containing task status information or None if task not found
+        """
+        if task_id in self._task_results:
+            return self._task_results[task_id]
+        elif task_id in self.running_tasks:
+            return {
+                'status': 'running',
+                'result': None,
+                'retries': 0
             }
-        })
-        return status
+        elif any(task.id == task_id for task in self.task_queue):
+            return {
+                'status': 'queued',
+                'result': None,
+                'retries': 0
+            }
+        return None
         
     def get_queue_status(self) -> Dict[str, Any]:
-        """Get the current status of the queue"""
-        status = {
-            'queue_size': len(self.task_queue),
-            'running_tasks': len(self.running_tasks),
-            'completed_tasks': len(self._task_results),
-            'cancelled_tasks': len(self.cancelled_tasks)
+        """Get the current status of the queue
+
+        Returns:
+            Dict containing queue statistics
+        """
+        completed = 0
+        running = len(self.running_tasks)
+        queued = len(self.task_queue)
+        tasks_by_priority = defaultdict(int)
+
+        for task in self.task_queue:
+            tasks_by_priority[task.priority.name] += 1
+
+        # Count completed tasks
+        for result in self._task_results.values():
+            if result.get('status') == 'completed':
+                completed += 1
+
+        return {
+            'queued_tasks': queued,
+            'running_tasks': running,
+            'completed_tasks': completed,
+            'tasks_by_priority': dict(tasks_by_priority)
         }
-        
-        logger.debug("Retrieved queue status", extra={
-            'context': {
-                'status': status,
-                'component': 'queue_manager.get_queue_status'
-            }
-        })
-        return status
