@@ -20,19 +20,27 @@ class SimpleRateLimiter:
                 "reset_time": 0,   
                 "remaining": 100,
                 "window": 86400,   # 24 hours
+                "min_remaining": 5  # Keep some auth operations in reserve
             },
             "write": {
                 "limit": 5000,     # write operations per day
                 "reset_time": 0,
                 "remaining": 5000,
                 "window": 86400,   # 24 hours
+                "min_remaining": 50 # Keep some write operations in reserve
             },
             "read": {
                 "limit": 50000,    # read operations per day
                 "reset_time": 0,
                 "remaining": 50000,
                 "window": 86400,   # 24 hours
+                "min_remaining": 100 # Keep some read operations in reserve
             }
+        }
+        self.backoff_times = {
+            "auth": 300,    # 5 minutes
+            "write": 600,   # 10 minutes
+            "read": 300     # 5 minutes
         }
 
     def update_from_headers(self, headers, op_type: str):
@@ -59,14 +67,17 @@ class SimpleRateLimiter:
 
     def can_make_request(self, op_type: str) -> bool:
         if op_type not in self.limits:
-            op_type = "read"  # default to read limits
+            op_type = "read"
         info = self.limits[op_type]
         now = int(time.time())
+        
         # Reset counters if past reset time
         if now >= info['reset_time']:
             info['remaining'] = info['limit']
             info['reset_time'] = now + info['window']
-        return info['remaining'] > 0
+            
+        # Allow request if we have more than min_remaining
+        return info['remaining'] > info['min_remaining']
 
     def decrement(self, op_type: str):
         if op_type not in self.limits:
@@ -75,15 +86,20 @@ class SimpleRateLimiter:
         if info['remaining'] > 0:
             info['remaining'] -= 1
 
-    def wait_if_limited(self, op_type: str) -> int:
-        """Return wait time in seconds if rate limited, 0 otherwise"""
+    def get_backoff_time(self, op_type: str) -> int:
+        """Return a reasonable backoff time when rate limited"""
         if op_type not in self.limits:
             op_type = "read"
+            
         info = self.limits[op_type]
         now = int(time.time())
-        if info['remaining'] <= 0 and now < info['reset_time']:
+        
+        # If we're close to reset time, wait for reset
+        if info['reset_time'] - now < self.backoff_times[op_type]:
             return max(1, info['reset_time'] - now)
-        return 0
+            
+        # Otherwise use the standard backoff time
+        return self.backoff_times[op_type]
 
 # Global rate limiter instance
 rate_limiter = SimpleRateLimiter()
@@ -91,7 +107,10 @@ rate_limiter = SimpleRateLimiter()
 def handle_rate_limit(operation_type: str) -> Callable:
     """
     Decorator that handles both local rate limiting and remote rate limit responses.
-    Implements exponential backoff for general errors and specific waits for rate limits.
+    Uses a more graceful approach for a continuously running bot:
+    - Keeps some operations in reserve for critical tasks
+    - Uses shorter backoff times instead of waiting for full reset
+    - Fails fast with RateLimitError instead of blocking
     """
     def decorator(func: Callable) -> Callable:
         @wraps(func)
@@ -99,22 +118,25 @@ def handle_rate_limit(operation_type: str) -> Callable:
             max_retries = 3
             base_delay = 1
             
+            # Check if we can make the request
+            if not rate_limiter.can_make_request(operation_type):
+                backoff = rate_limiter.get_backoff_time(operation_type)
+                logger.warning(f"Rate limit reached for {operation_type}, suggesting backoff of {backoff}s", extra={
+                    'context': {
+                        'operation_type': operation_type,
+                        'backoff': backoff,
+                        'component': 'bluesky.rate_limit'
+                    }
+                })
+                # Raise custom exception so caller can handle it
+                raise RateLimitError(f"Rate limit reached for {operation_type}", 
+                                   operation_type=operation_type,
+                                   backoff=backoff)
+            
+            # Decrement our local counter
+            rate_limiter.decrement(operation_type)
+            
             for attempt in range(max_retries):
-                # Check local rate limiter first
-                wait_time = rate_limiter.wait_if_limited(operation_type)
-                if wait_time > 0:
-                    logger.warning(f"Local rate limit reached for {operation_type}, waiting {wait_time}s", extra={
-                        'context': {
-                            'operation_type': operation_type,
-                            'wait_time': wait_time,
-                            'component': 'bluesky.rate_limit'
-                        }
-                    })
-                    time.sleep(wait_time)
-                
-                # Decrement our local counter
-                rate_limiter.decrement(operation_type)
-                
                 try:
                     result = func(*args, **kwargs)
                     return result
@@ -126,32 +148,21 @@ def handle_rate_limit(operation_type: str) -> Callable:
                         # Update our rate limiter from the response headers
                         rate_limiter.update_from_headers(response.headers, operation_type)
                         
-                        # Calculate wait time
-                        reset_time = int(response.headers.get('ratelimit-reset', 0))
-                        current_time = int(time.time())
-                        wait_time = max(30, reset_time - current_time)  # minimum 30s wait
+                        # Get backoff time
+                        backoff = rate_limiter.get_backoff_time(operation_type)
                         
-                        if attempt < max_retries - 1:
-                            logger.warning(f"Remote rate limit hit for {operation_type}, waiting {wait_time}s", extra={
-                                'context': {
-                                    'operation_type': operation_type,
-                                    'wait_time': wait_time,
-                                    'attempt': attempt + 1,
-                                    'reset_time': reset_time,
-                                    'component': 'bluesky.rate_limit'
-                                }
-                            })
-                            time.sleep(wait_time)
-                            continue
-                        else:
-                            logger.error(f"Rate limit exceeded for {operation_type} after {max_retries} attempts", extra={
-                                'context': {
-                                    'operation_type': operation_type,
-                                    'error': str(e),
-                                    'reset_time': reset_time,
-                                    'component': 'bluesky.rate_limit'
-                                }
-                            })
+                        logger.warning(f"Remote rate limit hit for {operation_type}, suggesting backoff of {backoff}s", extra={
+                            'context': {
+                                'operation_type': operation_type,
+                                'backoff': backoff,
+                                'attempt': attempt + 1,
+                                'component': 'bluesky.rate_limit'
+                            }
+                        })
+                        # Let caller handle the backoff
+                        raise RateLimitError(f"Remote rate limit hit for {operation_type}",
+                                           operation_type=operation_type,
+                                           backoff=backoff)
                     
                     # For non-rate-limit errors, use exponential backoff
                     if attempt < max_retries - 1:
@@ -201,6 +212,13 @@ def handle_rate_limit(operation_type: str) -> Callable:
             raise RuntimeError(f"Gave up after {max_retries} retries in {func.__name__}")
         return wrapper
     return decorator
+
+class RateLimitError(Exception):
+    """Custom exception for rate limit errors that includes backoff information"""
+    def __init__(self, message: str, operation_type: str, backoff: int):
+        super().__init__(message)
+        self.operation_type = operation_type
+        self.backoff = backoff
 
 class BlueskyClient:
     def __init__(self):
