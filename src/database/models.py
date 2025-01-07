@@ -74,4 +74,17 @@ class Comment(Base):
     replied_at = Column(DateTime, nullable=True)
 
     # Relationship to post
-    post = relationship("Post", back_populates="comments") 
+    post = relationship("Post", back_populates="comments")
+
+class ScheduledTask(Base):
+    """Store scheduled tasks"""
+    __tablename__ = "scheduled_tasks"
+
+    id = Column(Integer, primary_key=True, index=True)
+    task_id = Column(String, nullable=False, unique=True)
+    platform = Column(Enum(Platform), nullable=False)
+    content = Column(String, nullable=False)
+    scheduled_time = Column(DateTime, nullable=False)
+    priority = Column(String, nullable=False)  # HIGH, MEDIUM, LOW
+    created_at = Column(DateTime, default=datetime.utcnow)
+    status = Column(String, default="pending")  # pending, completed, cancelled, failed 

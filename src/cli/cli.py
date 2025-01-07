@@ -10,8 +10,11 @@ from pathlib import Path
 from datetime import datetime
 from typing import Optional
 from functools import update_wrapper
+from sqlalchemy import create_engine
+from sqlalchemy.orm import sessionmaker
 
 from ..config import Config
+from ..database import Base
 from ..content.generator import ContentGenerator
 from ..database.operations import DatabaseOperations
 from ..scheduler.task_scheduler import TaskScheduler
@@ -21,6 +24,18 @@ from ..social.twitter import TwitterClient
 from ..social.bluesky import BlueskyClient
 
 logger = logging.getLogger(__name__)
+
+# Create database engine and session
+engine = create_engine("sqlite:///data/social_bot.db")
+Base.metadata.create_all(engine)
+SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
+
+def get_db():
+    db = SessionLocal()
+    try:
+        return db
+    finally:
+        db.close()
 
 def async_command(f):
     """Decorator to run async commands"""
@@ -79,7 +94,8 @@ async def post(platform: str, content: str, schedule: Optional[str] = None) -> N
                 click.echo("Invalid schedule format. Use YYYY-MM-DD HH:MM", err=True)
                 sys.exit(1)
                 
-            queue = QueueManager()
+            db = get_db()
+            queue = QueueManager(db=db)
             await queue.start()
             try:
                 if platform == 'twitter':
@@ -100,10 +116,11 @@ async def post(platform: str, content: str, schedule: Optional[str] = None) -> N
                         coroutine=client.post_content,
                         args=(content,)
                     )
-                post_id = await queue.add_task(task)
+                post_id = await queue.add_task(task, scheduled_time=schedule_time)
                 click.echo(f"Post scheduled with ID: {post_id}")
             finally:
                 await queue.shutdown()
+                db.close()
         else:
             if platform == 'twitter':
                 client = TwitterClient()
@@ -127,7 +144,8 @@ async def post(platform: str, content: str, schedule: Optional[str] = None) -> N
 async def list_scheduled_posts() -> None:
     """List all scheduled posts"""
     try:
-        queue = QueueManager()
+        db = get_db()
+        queue = QueueManager(db=db)
         await queue.start()
         try:
             status = await queue.get_queue_status()
@@ -142,6 +160,7 @@ async def list_scheduled_posts() -> None:
                 click.echo("No scheduled posts")
         finally:
             await queue.shutdown()
+            db.close()
     except Exception as e:
         logger.error(f"Error listing scheduled posts: {e}")
         click.echo(f"Error: {str(e)}", err=True)
@@ -153,7 +172,8 @@ async def list_scheduled_posts() -> None:
 async def cancel(post_id: int) -> None:
     """Cancel a scheduled post"""
     try:
-        queue = QueueManager()
+        db = get_db()
+        queue = QueueManager(db=db)
         await queue.start()
         try:
             if await queue.cancel_task(str(post_id)):
@@ -163,6 +183,7 @@ async def cancel(post_id: int) -> None:
                 sys.exit(1)
         finally:
             await queue.shutdown()
+            db.close()
     except Exception as e:
         logger.error(f"Error cancelling post: {e}")
         click.echo(f"Error: {str(e)}", err=True)

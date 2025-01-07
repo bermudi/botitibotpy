@@ -38,7 +38,7 @@ class TestQueueManager(unittest.IsolatedAsyncioTestCase):
 
         # Assert
         self.assertEqual(task_id, "test_task")
-        queue_status = self.queue_manager.get_queue_status()
+        queue_status = await self.queue_manager.get_queue_status()
         self.assertEqual(queue_status['completed_tasks'], 1)
 
     async def test_task_priority_order(self):
@@ -122,7 +122,7 @@ class TestQueueManager(unittest.IsolatedAsyncioTestCase):
             
             # Assert initial state
             self.assertLessEqual(len(running_tasks), 2)  # No more than 2 tasks running at once
-            queue_status = self.queue_manager.get_queue_status()
+            queue_status = await self.queue_manager.get_queue_status()
             self.assertEqual(queue_status['running_tasks'], len(running_tasks))
             self.assertEqual(queue_status['queued_tasks'], 4 - len(running_tasks))
             
