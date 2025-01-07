@@ -55,7 +55,10 @@ class QueueManager:
         self._task_results: Dict[str, Any] = {}
         self.cancelled_tasks = set()  # Track cancelled tasks
         self.queue_lock = asyncio.Lock()  # Lock for queue operations
-        self.rate_limit_delays: Dict[str, datetime] = {}  # Track rate limit delays by platform
+        
+        # Track rate limits by operation type
+        self.rate_limit_delays: Dict[str, datetime] = defaultdict(lambda: datetime.min)
+        
         self._shutdown = False
         self._queue_processor = None
         
@@ -279,17 +282,26 @@ class QueueManager:
             logger.warning("Rate limit hit, scheduling retry", extra={
                 'context': {
                     'task_id': task.id,
-                    'retry_after': e.retry_after,
+                    'operation_type': e.operation_type,
+                    'backoff': e.backoff,
                     'component': 'queue_manager.execute_task'
                 }
             })
+            
+            # Update rate limit delay for this operation type
+            self.rate_limit_delays[e.operation_type] = datetime.now() + timedelta(seconds=e.backoff)
+            
             self._task_results[task.id] = {
                 'status': 'rate_limited',
                 'result': None,
                 'retries': task.retries,
-                'error': str(e)
+                'error': str(e),
+                'operation_type': e.operation_type,
+                'backoff': e.backoff
             }
-            await self._schedule_retry(task, e.retry_after)
+            
+            # Schedule retry after backoff
+            await self._schedule_retry(task, e.backoff)
 
         except Exception as e:
             logger.error("Task execution failed", exc_info=True, extra={
@@ -399,3 +411,12 @@ class QueueManager:
             'completed_tasks': completed,
             'tasks_by_priority': dict(tasks_by_priority)
         }
+
+    def is_rate_limited(self, operation_type: str) -> bool:
+        """Check if an operation type is currently rate limited"""
+        return datetime.now() < self.rate_limit_delays[operation_type]
+
+    def get_rate_limit_delay(self, operation_type: str) -> int:
+        """Get remaining delay in seconds for a rate limited operation"""
+        delay = (self.rate_limit_delays[operation_type] - datetime.now()).total_seconds()
+        return max(0, int(delay))

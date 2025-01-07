@@ -195,7 +195,33 @@ class TaskScheduler:
             logger.warning("Rate limit hit", extra={
                 'context': {
                     'platform': platform,
-                    'retry_after': getattr(error, 'retry_after', 60),
+                    'operation_type': error.operation_type,
+                    'backoff': error.backoff,
+                    'component': 'task_scheduler.handle_platform_error'
+                }
+            })
+            
+            # Adjust intervals based on rate limit type
+            if error.operation_type == "write":
+                # Double the content generation interval temporarily
+                self.intervals['content_generation'] = min(
+                    self.intervals['content_generation'] * 2,
+                    120  # Cap at 2 hours
+                )
+            elif error.operation_type == "read":
+                # Double the check intervals temporarily
+                self.intervals['reply_check'] = min(
+                    self.intervals['reply_check'] * 2,
+                    30  # Cap at 30 minutes
+                )
+                self.intervals['metrics_update'] = min(
+                    self.intervals['metrics_update'] * 2,
+                    60  # Cap at 1 hour
+                )
+                
+            logger.info("Adjusted task intervals due to rate limit", extra={
+                'context': {
+                    'new_intervals': self.intervals,
                     'component': 'task_scheduler.handle_platform_error'
                 }
             })
@@ -227,12 +253,6 @@ class TaskScheduler:
             return True
             
         # Unknown errors should not disable the platform
-        if platform == 'twitter':
-            logger.debug(f"Twitter enabled after error? {self.config.twitter.enabled}", extra={
-                'context': {
-                    'component': 'task_scheduler.handle_platform_error'
-                }
-            })
         return False
 
     async def _schedule_content_generation(self):
@@ -246,7 +266,27 @@ class TaskScheduler:
         
         while True:
             try:
+                # Check if we're rate limited for write operations
+                if self.queue_manager.is_rate_limited("write"):
+                    delay = self.queue_manager.get_rate_limit_delay("write")
+                    logger.warning("Write operations rate limited, skipping content generation", extra={
+                        'context': {
+                            'delay': delay,
+                            'component': 'task_scheduler.schedule_content_generation'
+                        }
+                    })
+                    await asyncio.sleep(min(delay, self.intervals['content_generation'] * 60))
+                    continue
+                
                 await self._generate_and_post_content()
+                
+                # If successful, gradually reduce the interval back to normal
+                if self.intervals['content_generation'] > self.config.content_generation_interval:
+                    self.intervals['content_generation'] = max(
+                        self.config.content_generation_interval,
+                        self.intervals['content_generation'] // 2
+                    )
+                    
             except Exception as e:
                 logger.error("Error in content generation cycle", exc_info=True, extra={
                     'context': {
@@ -268,7 +308,27 @@ class TaskScheduler:
         
         while True:
             try:
+                # Check if we're rate limited for read operations
+                if self.queue_manager.is_rate_limited("read"):
+                    delay = self.queue_manager.get_rate_limit_delay("read")
+                    logger.warning("Read operations rate limited, skipping reply check", extra={
+                        'context': {
+                            'delay': delay,
+                            'component': 'task_scheduler.schedule_reply_checking'
+                        }
+                    })
+                    await asyncio.sleep(min(delay, self.intervals['reply_check'] * 60))
+                    continue
+                
                 await self._check_and_handle_replies()
+                
+                # If successful, gradually reduce the interval back to normal
+                if self.intervals['reply_check'] > self.config.reply_check_interval:
+                    self.intervals['reply_check'] = max(
+                        self.config.reply_check_interval,
+                        self.intervals['reply_check'] // 2
+                    )
+                    
             except Exception as e:
                 logger.error("Error in reply checking cycle", exc_info=True, extra={
                     'context': {
@@ -290,6 +350,18 @@ class TaskScheduler:
         
         while True:
             try:
+                # Check if we're rate limited for read operations
+                if self.queue_manager.is_rate_limited("read"):
+                    delay = self.queue_manager.get_rate_limit_delay("read")
+                    logger.warning("Read operations rate limited, skipping metrics collection", extra={
+                        'context': {
+                            'delay': delay,
+                            'component': 'task_scheduler.schedule_metrics_collection'
+                        }
+                    })
+                    await asyncio.sleep(min(delay, self.intervals['metrics_update'] * 60))
+                    continue
+                
                 # Get recent posts from the last 24 hours
                 posts = await self.db_ops.get_recent_posts(hours=24)
                 logger.info("Retrieved recent posts", extra={
@@ -302,6 +374,13 @@ class TaskScheduler:
                 # Collect metrics for each post
                 for post in posts:
                     await self._collect_post_metrics(post)
+                    
+                # If successful, gradually reduce the interval back to normal
+                if self.intervals['metrics_update'] > self.config.metrics_update_interval:
+                    self.intervals['metrics_update'] = max(
+                        self.config.metrics_update_interval,
+                        self.intervals['metrics_update'] // 2
+                    )
                     
             except Exception as e:
                 logger.error("Error in metrics collection cycle", exc_info=True, extra={
