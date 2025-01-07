@@ -41,6 +41,11 @@ class TaskScheduler:
         """
         # Configure logging
         logger.setLevel(log_level)
+        logger.info("Initializing TaskScheduler", extra={
+            'context': {
+                'component': 'task_scheduler'
+            }
+        })
         
         # Initialize components
         self.db_ops = DatabaseOperations(db)
@@ -52,7 +57,7 @@ class TaskScheduler:
         self.config = config or SchedulerConfig()
         
         # Initialize queue manager
-        self.queue_manager = QueueManager(max_concurrent_tasks=self.config.max_concurrent_tasks)
+        self.queue_manager = QueueManager(max_concurrent_tasks=self.config.max_concurrent_tasks, log_level=log_level)
         
         # Track running tasks and intervals
         self.tasks: Dict[str, asyncio.Task] = {}
@@ -62,38 +67,61 @@ class TaskScheduler:
             'metrics_update': self.config.metrics_update_interval
         }
         
+        logger.debug("TaskScheduler initialized with intervals", extra={
+            'context': {
+                'intervals': self.intervals,
+                'component': 'task_scheduler'
+            }
+        })
+
     def update_config(self, new_config: SchedulerConfig):
-        """Update scheduler configuration
-        
-        Args:
-            new_config: New configuration to apply
-        """
-        logger.info("Updating scheduler configuration")
+        """Update scheduler configuration"""
+        logger.info("Updating scheduler configuration", extra={
+            'context': {
+                'old_intervals': self.intervals,
+                'new_content_interval': new_config.content_generation_interval,
+                'new_reply_interval': new_config.reply_check_interval,
+                'new_metrics_interval': new_config.metrics_update_interval,
+                'component': 'task_scheduler.update_config'
+            }
+        })
         self.config = new_config
-        self.queue_manager.max_concurrent_tasks = new_config.max_concurrent_tasks
-        
+        self.intervals.update({
+            'content_generation': new_config.content_generation_interval,
+            'reply_check': new_config.reply_check_interval,
+            'metrics_update': new_config.metrics_update_interval
+        })
+
     def update_interval(self, task_type: str, minutes: int):
-        """Update the interval for a specific task type
-        
-        Args:
-            task_type: Type of task to update ('content_generation', 'reply_check', or 'metrics_update')
-            minutes: New interval in minutes
-        """
+        """Update the interval for a specific task type"""
         if task_type not in self.intervals:
-            raise ValueError(f"Unknown task type: {task_type}")
-        
+            logger.error("Invalid task type for interval update", extra={
+                'context': {
+                    'task_type': task_type,
+                    'valid_types': list(self.intervals.keys()),
+                    'component': 'task_scheduler.update_interval'
+                }
+            })
+            raise ValueError(f"Invalid task type: {task_type}")
+            
+        logger.info("Updating task interval", extra={
+            'context': {
+                'task_type': task_type,
+                'old_interval': self.intervals[task_type],
+                'new_interval': minutes,
+                'component': 'task_scheduler.update_interval'
+            }
+        })
         self.intervals[task_type] = minutes
-        logger.info(f"Updated {task_type} interval to {minutes} minutes")
-        
-        # Restart the task if it's running
-        if task_type in self.tasks:
-            task = self.tasks[task_type]
-            task.cancel()
-            self.tasks[task_type] = asyncio.create_task(self._get_scheduler_for_type(task_type)())
 
     async def start(self):
         """Start all scheduled tasks"""
-        logger.info("Starting scheduled tasks")
+        logger.info("Starting scheduled tasks", extra={
+            'context': {
+                'task_types': list(self.intervals.keys()),
+                'component': 'task_scheduler.start'
+            }
+        })
         
         # Create tasks for each scheduled job
         self.tasks = {
@@ -103,277 +131,348 @@ class TaskScheduler:
         }
         
         # Wait for all tasks to complete
-        await asyncio.gather(*self.tasks.values())
-        
-    async def stop(self):
+        try:
+            await asyncio.gather(*self.tasks.values())
+        except Exception as e:
+            logger.error("Error in scheduled tasks", exc_info=True, extra={
+                'context': {
+                    'error': str(e),
+                    'component': 'task_scheduler.start'
+                }
+            })
+            raise
+
+    def stop(self):
         """Stop all running tasks"""
-        logger.info("Stopping scheduled tasks")
+        logger.info("Stopping all scheduled tasks", extra={
+            'context': {
+                'running_tasks': list(self.tasks.keys()),
+                'component': 'task_scheduler.stop'
+            }
+        })
+        
         for task in self.tasks.values():
             task.cancel()
-        
-        # Wait for tasks to complete
-        await asyncio.gather(*self.tasks.values(), return_exceptions=True)
-        self.tasks.clear()
-        
-    async def _handle_platform_error(self, platform: str, error: Exception) -> bool:
-        """Handle platform-specific errors
-        
-        Args:
-            platform: Platform where error occurred ('twitter' or 'bluesky')
-            error: The error that occurred
-            
-        Returns:
-            bool: True if error was handled, False if it should be re-raised
-        """
-        platform_config = getattr(self.config, platform)
+
+    def _handle_platform_error(self, platform: str, error: Exception) -> bool:
+        """Handle platform-specific errors"""
+        logger.error(f"Platform error occurred", exc_info=True, extra={
+            'context': {
+                'platform': platform,
+                'error_type': type(error).__name__,
+                'error': str(error),
+                'component': 'task_scheduler.handle_platform_error'
+            }
+        })
         
         if isinstance(error, RateLimitError):
-            logger.warning(f"{platform} rate limit hit. Waiting {error.retry_after} seconds")
+            logger.warning("Rate limit hit", extra={
+                'context': {
+                    'platform': platform,
+                    'retry_after': getattr(error, 'retry_after', 60),
+                    'component': 'task_scheduler.handle_platform_error'
+                }
+            })
             return True
             
-        elif str(error).lower().find("unauthorized") != -1:
-            logger.error(f"{platform} authentication error: {str(error)}")
-            # Disable the platform temporarily
-            platform_config.enabled = False
-            return True
-            
-        elif str(error).lower().find("not found") != -1:
-            logger.warning(f"{platform} resource not found: {str(error)}")
-            return True
-            
-        # Unknown errors should not disable the platform
-        # Return False to indicate error was not handled
-        platform_config.enabled = True  # Ensure platform stays enabled
         return False
 
     async def _schedule_content_generation(self):
         """Schedule periodic content generation and posting"""
+        logger.info("Starting content generation scheduler", extra={
+            'context': {
+                'interval_minutes': self.intervals['content_generation'],
+                'component': 'task_scheduler.schedule_content_generation'
+            }
+        })
+        
         while True:
             try:
-                logger.info("Starting content generation cycle")
-                
-                # Create content generation task
-                task = Task(
-                    id=f"content_gen_{datetime.now().timestamp()}",
-                    priority=TaskPriority.HIGH,
-                    created_at=datetime.now(),
-                    coroutine=self._generate_and_post_content,
-                    max_retries=3
-                )
-                
-                await self.queue_manager.add_task(task)
-                
+                await self._generate_and_post_content()
             except Exception as e:
-                logger.error(f"Error in content generation cycle: {str(e)}", exc_info=True)
-                
-            # Wait for next interval
+                logger.error("Error in content generation cycle", exc_info=True, extra={
+                    'context': {
+                        'error': str(e),
+                        'component': 'task_scheduler.schedule_content_generation'
+                    }
+                })
+            
             await asyncio.sleep(self.intervals['content_generation'] * 60)
 
     async def _schedule_reply_checking(self):
         """Schedule periodic checking and handling of replies"""
+        logger.info("Starting reply checking scheduler", extra={
+            'context': {
+                'interval_minutes': self.intervals['reply_check'],
+                'component': 'task_scheduler.schedule_reply_checking'
+            }
+        })
+        
         while True:
             try:
-                logger.info("Starting reply check cycle")
-                
-                # Create reply checking task
-                task = Task(
-                    id=f"reply_check_{datetime.now().timestamp()}",
-                    priority=TaskPriority.MEDIUM,
-                    created_at=datetime.now(),
-                    coroutine=self._check_and_handle_replies
-                )
-                
-                await self.queue_manager.add_task(task)
-                
+                await self._check_and_handle_replies()
             except Exception as e:
-                logger.error(f"Error in reply check cycle: {str(e)}", exc_info=True)
-                
-            # Wait for next interval
-            await asyncio.sleep(self.intervals['reply_check'] * 60)
+                logger.error("Error in reply checking cycle", exc_info=True, extra={
+                    'context': {
+                        'error': str(e),
+                        'component': 'task_scheduler.schedule_reply_checking'
+                    }
+                })
             
+            await asyncio.sleep(self.intervals['reply_check'] * 60)
+
     async def _schedule_metrics_collection(self):
         """Schedule periodic collection of engagement metrics"""
+        logger.info("Starting metrics collection scheduler", extra={
+            'context': {
+                'interval_minutes': self.intervals['metrics_update'],
+                'component': 'task_scheduler.schedule_metrics_collection'
+            }
+        })
+        
         while True:
             try:
-                logger.info("Starting metrics collection cycle")
-                
-                # Create metrics collection task
-                task = Task(
-                    id=f"metrics_{datetime.now().timestamp()}",
-                    priority=TaskPriority.LOW,
-                    created_at=datetime.now(),
-                    coroutine=self._collect_all_metrics
-                )
-                
-                await self.queue_manager.add_task(task)
-                
+                await self._collect_all_metrics()
             except Exception as e:
-                logger.error(f"Error in metrics collection cycle: {str(e)}", exc_info=True)
-                
-            # Wait for next interval
-            await asyncio.sleep(self.intervals['metrics_update'] * 60)
+                logger.error("Error in metrics collection cycle", exc_info=True, extra={
+                    'context': {
+                        'error': str(e),
+                        'component': 'task_scheduler.schedule_metrics_collection'
+                    }
+                })
             
-    def _get_scheduler_for_type(self, task_type: str):
-        """Get the scheduler coroutine for a task type"""
-        schedulers = {
-            'content_generation': self._schedule_content_generation,
-            'reply_check': self._schedule_reply_checking,
-            'metrics_update': self._schedule_metrics_collection
-        }
-        return schedulers[task_type]
+            await asyncio.sleep(self.intervals['metrics_update'] * 60)
 
     async def _generate_and_post_content(self):
         """Generate and post content to all platforms"""
-        # Generate content
-        content = await self.content_generator.generate_post(
-            "Create an engaging social media post about technology trends",
-            tone="professional",
-            style="informative"
-        )
+        logger.debug("Starting content generation cycle", extra={
+            'context': {
+                'component': 'task_scheduler.generate_and_post_content'
+            }
+        })
         
-        if content:
-            # Post to Twitter
-            twitter_post_id = await self._post_to_platform(
-                Platform.TWITTER,
-                content
-            )
+        content = await self.content_generator.generate_content()
+        if not content:
+            logger.warning("No content generated", extra={
+                'context': {
+                    'component': 'task_scheduler.generate_and_post_content'
+                }
+            })
+            return
             
-            # Post to Bluesky
-            bluesky_post_id = await self._post_to_platform(
-                Platform.BLUESKY,
-                content
-            )
-            
-            logger.info("Content generation and posting cycle completed")
-            return {'twitter_id': twitter_post_id, 'bluesky_id': bluesky_post_id}
-        else:
-            logger.error("Failed to generate content")
-            raise Exception("Content generation failed")
-            
+        logger.info("Content generated successfully", extra={
+            'context': {
+                'content_length': len(content),
+                'component': 'task_scheduler.generate_and_post_content'
+            }
+        })
+        
+        # Post to each platform
+        post_ids = {}
+        for platform in [Platform.TWITTER, Platform.BLUESKY]:
+            try:
+                post_id = await self._post_to_platform(platform, content)
+                if post_id:
+                    post_ids[platform] = post_id
+            except Exception as e:
+                if not self._handle_platform_error(platform.name.lower(), e):
+                    raise
+                    
+        return post_ids
+
     async def _check_and_handle_replies(self):
         """Check for new replies and generate responses"""
-        try:
-            # Get recent posts
-            posts = await self._get_recent_posts()
-            
-            for post in posts:
-                # Convert dict to object if needed
-                post_id = post.get('id') if isinstance(post, dict) else post.id
-                platform = post.get('platform') if isinstance(post, dict) else post.platform
-                
-                # Get new comments
-                if platform == Platform.TWITTER:
-                    comments = await self.twitter_client.get_new_comments(post_id)
-                elif platform == Platform.BLUESKY:
-                    comments = await self.bluesky_client.get_new_comments(post_id)
+        logger.debug("Starting reply check cycle", extra={
+            'context': {
+                'component': 'task_scheduler.check_and_handle_replies'
+            }
+        })
+        
+        # Get recent posts
+        recent_posts = await self._get_recent_posts()
+        logger.info("Retrieved recent posts", extra={
+            'context': {
+                'post_count': len(recent_posts),
+                'component': 'task_scheduler.check_and_handle_replies'
+            }
+        })
+        
+        for post in recent_posts:
+            try:
+                # Get replies for each platform
+                if post.platform == Platform.TWITTER:
+                    replies = await self.twitter_client.get_tweet_thread(post.platform_id)
                 else:
-                    continue
-
-                # Process each comment
-                for comment in comments:
-                    try:
-                        # Convert dict to object if needed
-                        comment_content = comment.get('content') if isinstance(comment, dict) else comment.content
-                        comment_id = comment.get('id') if isinstance(comment, dict) else comment.id
+                    replies = await self.bluesky_client.get_post_thread(post.platform_id)
+                    
+                logger.debug("Retrieved replies for post", extra={
+                    'context': {
+                        'post_id': post.id,
+                        'platform': post.platform.name,
+                        'reply_count': len(replies),
+                        'component': 'task_scheduler.check_and_handle_replies'
+                    }
+                })
+                
+                # Handle each reply
+                for reply in replies:
+                    # Generate response
+                    response = await self.content_generator.generate_reply(reply.text)
+                    if not response:
+                        continue
                         
-                        # Generate and post reply
-                        prompt = f"Generate a friendly and engaging reply to this comment: {comment_content}"
-                        reply = await self.content_generator.generate_reply(prompt)
+                    # Post response
+                    if post.platform == Platform.TWITTER:
+                        await self._reply_on_twitter(reply.id, response)
+                    else:
+                        await self._reply_on_bluesky(reply.id, response)
                         
-                        if platform == Platform.TWITTER:
-                            await self.twitter_client.post_reply(comment_id, reply)
-                        elif platform == Platform.BLUESKY:
-                            await self.bluesky_client.post_reply(comment_id, reply)
-                            
-                    except Exception as e:
-                        logger.error(f"Error handling reply for comment {comment_id}: {str(e)}", exc_info=True)
+            except Exception as e:
+                logger.error("Error handling replies for post", exc_info=True, extra={
+                    'context': {
+                        'post_id': post.id,
+                        'platform': post.platform.name,
+                        'error': str(e),
+                        'component': 'task_scheduler.check_and_handle_replies'
+                    }
+                })
 
-        except Exception as e:
-            logger.error(f"Error checking replies: {str(e)}", exc_info=True)
-            
     async def _collect_all_metrics(self):
         """Collect metrics for all recent posts"""
-        try:
-            recent_posts = await self.db_ops.get_recent_posts(hours=24)
-            for post in recent_posts:
-                metrics = await self._collect_post_metrics(post)
-                if metrics:
-                    await self.db_ops.update_engagement_metrics(
-                        post.id,
-                        likes=metrics['likes'],
-                        replies=metrics['replies'],
-                        reposts=metrics['reposts'],
-                        views=metrics.get('views', 0)
-                    )
-        except Exception as e:
-            logger.error(f"Error collecting metrics: {str(e)}", exc_info=True)
-            
-    async def _post_to_platform(self, platform: Platform, content: str) -> Optional[str]:
-        """Post content to a specific platform
+        logger.debug("Starting metrics collection cycle", extra={
+            'context': {
+                'component': 'task_scheduler.collect_all_metrics'
+            }
+        })
         
-        Returns:
-            Optional[str]: The platform-specific post ID if successful
-        """
-        try:
-            if platform == Platform.TWITTER:
-                await self.twitter_client.post_content(content)
-            else:  # Bluesky
-                await self.bluesky_client.post_content(content)
-                
-            return "post_id"  # Replace with actual post ID from response
-            
-        except Exception as e:
-            if await self._handle_platform_error(platform.value.lower(), e):
-                return None
-            else:
-                raise
-                
-    async def _reply_on_twitter(self, comment_id: str, content: str) -> Optional[str]:
-        """Post a reply on Twitter"""
-        try:
-            self.twitter_client.reply_to_tweet(comment_id, content)
-            return "reply_id"  # Replace with actual reply ID
-        except Exception as e:
-            if await self._handle_platform_error('twitter', e):
-                return None
-            else:
-                raise
-                
-    async def _reply_on_bluesky(self, comment_id: str, content: str) -> Optional[str]:
-        """Post a reply on Bluesky"""
-        try:
-            self.bluesky_client.reply_to_post(comment_id, content)
-            return "reply_id"  # Replace with actual reply ID
-        except Exception as e:
-            if await self._handle_platform_error('bluesky', e):
-                return None
-            else:
-                raise
-                
-    def _get_recent_posts(self) -> List[Post]:
-        """Get posts from the last 24 hours"""
-        return self.db_ops.get_recent_posts(hours=24)
+        recent_posts = await self._get_recent_posts()
+        logger.info("Retrieved posts for metrics collection", extra={
+            'context': {
+                'post_count': len(recent_posts),
+                'component': 'task_scheduler.collect_all_metrics'
+            }
+        })
         
+        for post in recent_posts:
+            try:
+                await self._collect_post_metrics(post)
+            except Exception as e:
+                logger.error("Error collecting metrics for post", exc_info=True, extra={
+                    'context': {
+                        'post_id': post.id,
+                        'platform': post.platform.name,
+                        'error': str(e),
+                        'component': 'task_scheduler.collect_all_metrics'
+                    }
+                })
+
     async def _collect_post_metrics(self, post):
         """Collect metrics for a single post"""
+        logger.debug("Collecting metrics for post", extra={
+            'context': {
+                'post_id': post.id,
+                'platform': post.platform.name,
+                'component': 'task_scheduler.collect_post_metrics'
+            }
+        })
+        
         try:
-            # Convert dict to object if needed
-            if isinstance(post, dict):
-                post_id = post.get('id')
-                platform = post.get('platform')
+            if post.platform == Platform.TWITTER:
+                metrics = await self.twitter_client.get_tweet_metrics(post.platform_id)
             else:
-                post_id = post.id
-                platform = post.platform
-
-            if platform == Platform.TWITTER:
-                metrics = await self.twitter_client.get_post_metrics(post_id)
-            elif platform == Platform.BLUESKY:
-                metrics = await self.bluesky_client.get_post_metrics(post_id)
-            else:
-                logger.warning(f"Unknown platform for post {post_id}")
-                return None
-
-            return metrics
+                metrics = await self.bluesky_client.get_post_metrics(post.platform_id)
+                
+            # Update database
+            await self.db_ops.update_post_metrics(post.id, metrics)
+            
+            logger.info("Successfully updated post metrics", extra={
+                'context': {
+                    'post_id': post.id,
+                    'platform': post.platform.name,
+                    'metrics': metrics,
+                    'component': 'task_scheduler.collect_post_metrics'
+                }
+            })
+            
         except Exception as e:
-            logger.error(f"Error collecting metrics for post {post_id}: {str(e)}")
-            return None
+            logger.error("Failed to collect metrics for post", exc_info=True, extra={
+                'context': {
+                    'post_id': post.id,
+                    'platform': post.platform.name,
+                    'error': str(e),
+                    'component': 'task_scheduler.collect_post_metrics'
+                }
+            })
+            raise
+
+    async def _post_to_platform(self, platform: Platform, content: str) -> Optional[str]:
+        """Post content to a specific platform"""
+        logger.debug("Posting content to platform", extra={
+            'context': {
+                'platform': platform.name,
+                'content_length': len(content),
+                'component': 'task_scheduler.post_to_platform'
+            }
+        })
+        
+        try:
+            if platform == Platform.TWITTER:
+                post_id = await self.twitter_client.post_content(content)
+            else:
+                post_id = await self.bluesky_client.post_content(content)
+                
+            if post_id:
+                # Save to database
+                await self.db_ops.create_post(platform, post_id, content)
+                
+                logger.info("Successfully posted content", extra={
+                    'context': {
+                        'platform': platform.name,
+                        'post_id': post_id,
+                        'component': 'task_scheduler.post_to_platform'
+                    }
+                })
+                
+            return post_id
+            
+        except Exception as e:
+            logger.error("Failed to post content", exc_info=True, extra={
+                'context': {
+                    'platform': platform.name,
+                    'error': str(e),
+                    'component': 'task_scheduler.post_to_platform'
+                }
+            })
+            raise
+
+    async def _get_recent_posts(self):
+        """Get posts from the last 24 hours"""
+        logger.debug("Retrieving recent posts", extra={
+            'context': {
+                'time_window': '24h',
+                'component': 'task_scheduler.get_recent_posts'
+            }
+        })
+        
+        try:
+            posts = await self.db_ops.get_posts_since(
+                datetime.now() - timedelta(hours=24)
+            )
+            
+            logger.info("Retrieved recent posts", extra={
+                'context': {
+                    'post_count': len(posts),
+                    'component': 'task_scheduler.get_recent_posts'
+                }
+            })
+            
+            return posts
+            
+        except Exception as e:
+            logger.error("Failed to retrieve recent posts", exc_info=True, extra={
+                'context': {
+                    'error': str(e),
+                    'component': 'task_scheduler.get_recent_posts'
+                }
+            })
+            raise
