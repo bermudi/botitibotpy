@@ -1,3 +1,4 @@
+import json
 import time
 import logging
 from atproto import Client, client_utils
@@ -7,7 +8,6 @@ from ..config import Config
 from atproto_client.models.app.bsky.feed.get_author_feed import Params as AuthorFeedParams
 from pathlib import Path
 from functools import wraps
-import httpx
 
 logger = logging.getLogger("botitibot.social.bluesky")
 
