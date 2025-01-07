@@ -62,7 +62,7 @@ def list_sources() -> None:
             for source in sources:
                 click.echo(f"- {source}")
         else:
-            click.echo("No content sources found")
+            click.echo("No content sources registered")
     except Exception as e:
         logger.error(f"Error listing sources: {e}")
         click.echo(f"Error: {str(e)}", err=True)
