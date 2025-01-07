@@ -110,28 +110,28 @@
     - [x] Custom alert conditions with cooldown
 
 ### Phase 6: CLI Implementation
-- [ ] Core CLI Framework
-  - [ ] Command-line argument parsing
-  - [ ] Configuration management via CLI
-  - [ ] Interactive mode
-- [ ] Content Management Commands
-  - [ ] Generate content manually
-  - [ ] List/view generated content
-  - [ ] Test content generation with different parameters
-- [ ] Social Media Management
-  - [ ] Platform authentication setup
-  - [ ] Manual post creation/scheduling
-  - [ ] View scheduled posts
-  - [ ] Cancel/modify scheduled posts
-- [ ] System Management
-  - [ ] Start/stop scheduler
-  - [ ] View active tasks
-  - [ ] View system status
-  - [ ] Basic monitoring commands
-- [ ] Testing Utilities
-  - [ ] Mock post generation
-  - [ ] Dry-run capabilities
-  - [ ] Performance testing tools
+- [x] Core CLI Framework
+  - [x] Command-line argument parsing
+  - [x] Configuration management via CLI
+  - [x] Interactive mode
+- [x] Content Management Commands
+  - [x] Generate content manually
+  - [x] List/view generated content
+  - [x] Test content generation with different parameters
+- [x] Social Media Management
+  - [x] Platform authentication setup
+  - [x] Manual post creation/scheduling
+  - [x] View scheduled posts
+  - [x] Cancel/modify scheduled posts
+- [x] System Management
+  - [x] Start/stop scheduler
+  - [x] View active tasks
+  - [x] View system status
+  - [x] Basic monitoring commands
+- [x] Testing Utilities
+  - [x] Mock post generation
+  - [x] Dry-run capabilities
+  - [x] Performance testing tools
 
 ### Phase 7: API Implementation
 - [ ] Core API Setup
