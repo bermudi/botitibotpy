@@ -134,22 +134,28 @@ class TwitterClient:
         """Fetch user's timeline"""
         try:
             timeline = self.api.get_tweet_api().get_home_timeline(count=limit)
+            logger.debug(f"Timeline response type: {type(timeline)}")
+            logger.debug(f"Timeline response: {timeline}")
+            
             # Extract relevant data from timeline response
             tweets = []
-            for item in timeline.data:
-                tweet_data = item.tweet
-                user_data = item.user
-                tweets.append({
-                    'content': tweet_data.text,
-                    'created_at': tweet_data.created_at,
-                    'author': user_data.username,
-                    'engagement_metrics': {
-                        'likes': tweet_data.favorite_count,
-                        'retweets': tweet_data.retweet_count,
-                        'replies': tweet_data.reply_count,
-                        'views': tweet_data.view_count if hasattr(tweet_data, 'view_count') else 0
-                    }
-                })
+            for entry in timeline.raw.entry:
+                if hasattr(entry, 'content') and hasattr(entry.content, 'itemContent'):
+                    tweet_result = entry.content.itemContent.tweet_results.result
+                    user_result = tweet_result.core.user_results.result
+                    
+                    tweets.append({
+                        'content': tweet_result.legacy.full_text,
+                        'created_at': tweet_result.legacy.created_at,
+                        'author': user_result.legacy.screen_name,
+                        'engagement_metrics': {
+                            'likes': tweet_result.legacy.favorite_count,
+                            'retweets': tweet_result.legacy.retweet_count,
+                            'replies': tweet_result.legacy.reply_count,
+                            'views': tweet_result.views.count if hasattr(tweet_result, 'views') else 0
+                        }
+                    })
+            
             logger.info(f"Successfully fetched {len(tweets)} timeline items", extra={
                 'context': {
                     'limit': limit,
