@@ -196,7 +196,8 @@ def social():
 
 @social.command()
 @click.argument('platform', type=click.Choice(['twitter', 'bluesky']))
-def auth(platform):
+@async_command
+async def auth(platform):
     """Authenticate with a social media platform"""
     try:
         if platform == 'bluesky':
@@ -215,7 +216,7 @@ def auth(platform):
                 click.echo("  - Authentication: ✓")
                 try:
                     # Try to verify credentials by fetching the home timeline
-                    timeline = client.get_timeline(limit=1)
+                    timeline = await client.get_timeline(limit=1)
                     click.echo("  - API access: ✓")
                 except Exception as e:
                     click.echo("  - API access: ✗")

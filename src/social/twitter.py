@@ -130,17 +130,30 @@ class TwitterClient:
             return False
             
     @retry_on_failure()
-    def get_timeline(self, limit: int = 20) -> Optional[Any]:
+    async def get_timeline(self, limit: int = 20) -> Optional[Any]:
         """Fetch user's timeline"""
         try:
             timeline = self.api.get_tweet_api().get_home_timeline(count=limit)
-            logger.info(f"Successfully fetched {limit} timeline items", extra={
+            # Extract relevant data from timeline response
+            tweets = []
+            for tweet in timeline.data:
+                tweets.append({
+                    'content': tweet.text,
+                    'created_at': tweet.created_at,
+                    'engagement_metrics': {
+                        'likes': tweet.favorite_count,
+                        'retweets': tweet.retweet_count,
+                        'replies': tweet.reply_count,
+                        'views': tweet.view_count
+                    }
+                })
+            logger.info(f"Successfully fetched {len(tweets)} timeline items", extra={
                 'context': {
                     'limit': limit,
                     'component': 'twitter.timeline'
                 }
             })
-            return timeline
+            return tweets
         except Exception as e:
             logger.error(f"Error fetching timeline: {e}", exc_info=True, extra={
                 'context': {
@@ -151,20 +164,29 @@ class TwitterClient:
             raise
             
     @retry_on_failure()
-    def get_tweet_thread(self, tweet_id: str) -> Optional[Any]:
+    async def get_tweet_thread(self, tweet_id: str) -> Optional[Any]:
         """Fetch a tweet and its replies"""
         try:
             thread = self.api.get_tweet_api().get_tweet_detail(
                 tweet_id=tweet_id,
                 with_replies=True
             )
+            # Extract relevant data from thread response
+            comments = []
+            for tweet in thread.data:
+                if tweet.referenced_tweets and tweet.referenced_tweets[0].type == 'replied_to':
+                    comments.append({
+                        'author': tweet.author.username,
+                        'content': tweet.text,
+                        'created_at': tweet.created_at
+                    })
             logger.info(f"Successfully fetched thread for tweet {tweet_id}", extra={
                 'context': {
                     'tweet_id': tweet_id,
                     'component': 'twitter.thread'
                 }
             })
-            return thread
+            return comments
         except Exception as e:
             logger.error(f"Error fetching tweet thread: {e}", exc_info=True, extra={
                 'context': {
@@ -175,7 +197,7 @@ class TwitterClient:
             raise
             
     @retry_on_failure()
-    def like_tweet(self, tweet_id: str) -> bool:
+    async def like_tweet(self, tweet_id: str) -> bool:
         """Like a tweet"""
         try:
             self.api.get_post_api().create_favorite(tweet_id=tweet_id)
@@ -196,7 +218,7 @@ class TwitterClient:
             raise
             
     @retry_on_failure()
-    def reply_to_tweet(self, tweet_id: str, text: str) -> bool:
+    async def reply_to_tweet(self, tweet_id: str, text: str) -> bool:
         """Reply to a tweet"""
         try:
             self.api.get_post_api().create_tweet(
@@ -221,7 +243,7 @@ class TwitterClient:
             raise
 
     @retry_on_failure()
-    def get_author_feed(self, screen_name: Optional[str] = None) -> Optional[Any]:
+    async def get_author_feed(self, screen_name: Optional[str] = None) -> Optional[Any]:
         """Fetch tweets from a specific author. If no screen_name is provided, fetches tweets from the authenticated user."""
         try:
             # If no screen_name provided, get the authenticated user's screen name
@@ -233,11 +255,26 @@ class TwitterClient:
             user_id = user_info.data.rest_id
             
             # Get user tweets with correct parameters
-            tweets = self.api.get_tweet_api().get_user_tweets(
+            tweets_response = self.api.get_tweet_api().get_user_tweets(
                 user_id=user_id,
                 with_replies=False,
                 with_retweets=True
             )
+            
+            # Extract relevant data from tweets response
+            tweets = []
+            for tweet in tweets_response.data:
+                tweets.append({
+                    'content': tweet.text,
+                    'created_at': tweet.created_at,
+                    'engagement_metrics': {
+                        'likes': tweet.favorite_count,
+                        'retweets': tweet.retweet_count,
+                        'replies': tweet.reply_count,
+                        'views': tweet.view_count
+                    }
+                })
+            
             logger.info(f"Successfully fetched tweets for user {screen_name}", extra={
                 'context': {
                     'screen_name': screen_name,
@@ -342,7 +379,7 @@ class TwitterClient:
             return False
     
     @retry_on_failure()
-    def post_content(self, content: str, use_rag: bool = False, **kwargs) -> bool:
+    async def post_content(self, content: str, use_rag: bool = False, **kwargs) -> bool:
         """Post content to Twitter with optional RAG support"""
         try:
             # Generate content if kwargs are provided
