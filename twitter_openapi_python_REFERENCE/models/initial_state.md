@@ -1,18 +1,17 @@
-# InitialStateApiUtilsRaw
+from typing import Any, Dict, Optional
 
-This class represents the raw initial state data from the API.
+import twitter_openapi_python_generated as twitter
+from pydantic import Field
 
-## Attributes
+from twitter_openapi_python.models import BaseModel
 
-- `initial_state`: A dictionary containing the initial state data.
-- `meta_data`: A dictionary containing the meta data.
 
-# InitialStateApiUtilsResponse
+class InitialStateApiUtilsRaw(BaseModel):
+    initial_state: Dict[str, Any] = Field()
+    meta_data: Dict[str, Any] = Field()
 
-This class represents the response from the initial state API.
 
-## Attributes
-
-- `raw`: An instance of `InitialStateApiUtilsRaw` containing the raw data.
-- `user`: An optional instance of `twitter.UserLegacy` representing the user.
-- `session`: An optional instance of `twitter.Session` representing the session.
+class InitialStateApiUtilsResponse(BaseModel):
+    raw: InitialStateApiUtilsRaw = Field()
+    user: Optional[twitter.UserLegacy] = Field(default=None)
+    session: Optional[twitter.Session] = Field(default=None)

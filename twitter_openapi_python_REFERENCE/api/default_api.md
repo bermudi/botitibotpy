@@ -1,35 +1,78 @@
-# DefaultApiUtils
+from typing import Any, Callable, Optional, TypeVar
 
-This class provides utility functions for the default API endpoints.
+import twitter_openapi_python_generated as twitter
+import twitter_openapi_python_generated.models as models
 
-## Methods
+from twitter_openapi_python.models import TweetApiUtilsData, TwitterApiUtilsResponse
+from twitter_openapi_python.utils import (
+    build_response,
+    build_tweet_api_utils,
+    get_kwargs,
+)
+from twitter_openapi_python.utils.api import error_check
 
-### `__init__(self, api: twitter.DefaultApi, flag: ParamType)`
+T1 = TypeVar("T1")
+T2 = TypeVar("T2")
+ApiFnType = Callable[..., twitter.ApiResponse[T1]]
+ParamType = dict[str, Any]
 
-Initializes the utility with an API client and a flag.
 
-- `api`: An instance of `twitter.DefaultApi`.
-- `flag`: A dictionary containing flag values.
+class DefaultApiUtils:
+    api: twitter.DefaultApi
+    flag: ParamType
 
-### `request(self, apiFn: ApiFnType[T1], convertFn: Callable[[T1], T2], key: str, param: ParamType)`
+    def __init__(self, api: twitter.DefaultApi, flag: ParamType):
+        self.api = api
+        self.flag = flag
 
-A generic request method that calls an API function, converts the response, and builds a `TwitterApiUtilsResponse`.
+    def request(
+        self,
+        apiFn: "ApiFnType[T1]",
+        convertFn: Callable[[T1], T2],
+        key: str,
+        param: ParamType,
+    ):
+        args = get_kwargs(flag=self.flag[key], additional=param)
+        res = apiFn(**args)
+        data = convertFn(res.data)
+        return build_response(res, data)
 
-- `apiFn`: The API function to call.
-- `convertFn`: A function to convert the response data.
-- `key`: The key to use for the flag.
-- `param`: Additional parameters for the API call.
+    def get_profile_spotlights_query(
+        self,
+        screen_name: Optional[str] = None,
+        extra_param: Optional[ParamType] = None,
+    ) -> TwitterApiUtilsResponse[models.UserResultByScreenName]:
+        param: ParamType = {}
+        if screen_name is not None:
+            param["screen_name"] = screen_name
+        if extra_param is not None:
+            param.update(extra_param)
 
-### `get_profile_spotlights_query(self, screen_name: Optional[str] = None, extra_param: Optional[ParamType] = None) -> TwitterApiUtilsResponse[models.UserResultByScreenName]`
+        response = self.request(
+            apiFn=self.api.get_profile_spotlights_query_with_http_info,
+            convertFn=lambda x: error_check(x.data.user_result_by_screen_name, x.errors),
+            key="ProfileSpotlightsQuery",
+            param=param,
+        )
+        return response
 
-Retrieves profile spotlights for a given screen name.
+    def get_tweet_result_by_rest_id(
+        self,
+        tweet_id: str,
+        extra_param: Optional[ParamType] = None,
+    ) -> TwitterApiUtilsResponse[TweetApiUtilsData]:
+        param: ParamType = {"tweetId": tweet_id}
+        if extra_param is not None:
+            param.update(extra_param)
 
-- `screen_name`: The screen name of the user.
-- `extra_param`: Additional parameters for the API call.
-
-### `get_tweet_result_by_rest_id(self, tweet_id: str, extra_param: Optional[ParamType] = None) -> TwitterApiUtilsResponse[TweetApiUtilsData]`
-
-Retrieves a tweet by its REST ID.
-
-- `tweet_id`: The ID of the tweet.
-- `extra_param`: Additional parameters for the API call.
+        response = self.request(
+            apiFn=self.api.get_tweet_result_by_rest_id_with_http_info,
+            convertFn=lambda x: error_check(
+                build_tweet_api_utils(error_check(x.data.tweet_result, x.errors)), x.errors
+            ),
+            key="TweetResultByRestId",
+            param=param,
+        )
+        if response.data is None:
+            raise Exception("No tweet")
+        return response  # type: ignore

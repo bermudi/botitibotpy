@@ -1,23 +1,72 @@
-# InitialStateApiUtils
+import json
+import re
+from typing import Any, Optional
 
-This class provides utility functions for the initial state API endpoint.
+import twitter_openapi_python_generated as twitter
+import twitter_openapi_python_generated.models as models
+from urllib3 import HTTPResponse
 
-## Methods
+from twitter_openapi_python.models import (
+    InitialStateApiUtilsRaw,
+    InitialStateApiUtilsResponse,
+)
 
-### `__init__(self, api: twitter.ApiClient)`
 
-Initializes the utility with an API client.
+class InitialStateApiUtils:
+    api: twitter.ApiClient
+    header: dict[str, Any]
 
-- `api`: An instance of `twitter.ApiClient`.
+    def __init__(self, api: twitter.ApiClient):
+        self.api = api
+        self.header = {
+            "user-agent": self.api.user_agent,
+            "cookie": self.api.cookie,
+        }
 
-### `request(self, url: str) -> HTTPResponse`
+    def request(self, url: str) -> HTTPResponse:
+        return self.api.rest_client.request(
+            "GET",
+            url=url,
+            headers=self.header,
+        )
 
-A generic request method that calls an API function.
+    def get_initial_state(self, url: str) -> InitialStateApiUtilsResponse:
+        response = self.request(url=url).data.decode("utf-8")
+        reg = '<script type="text/javascript" charset="utf-8" nonce="{nonce}">{any}</script>'
+        js = re.search(reg.format(nonce=r"([a-zA-Z0-9]{48})", any=r"([\s\S]*?)"), response)
 
-- `url`: The URL to request.
+        if js is None:
+            raise Exception("js is None")
 
-### `get_initial_state(self, url: str) -> InitialStateApiUtilsResponse`
+        reg2 = "^window\\.__INITIAL_STATE__={any};window\\.__META_DATA__={any};$"
 
-Retrieves the initial state from a given URL.
+        source = re.search(reg2.format(any=r"([\s\S]*?)"), js.group(2))
 
-- `url`: The URL to fetch the initial state from.
+        # none cast
+        if source is None:
+            raise Exception("source is None")
+
+        raw = InitialStateApiUtilsRaw(
+            initial_state=json.loads(source.group(1)),
+            meta_data=json.loads(source.group(2)),
+        )
+
+        def get_user(e: dict[str, Any]) -> Optional[models.UserLegacy]:
+            try:
+                entities = e["entities"]["users"]["entities"]
+                return models.UserLegacy.model_validate(list(entities.values())[0])
+            except Exception:
+                # todo: fix
+                return None
+
+        def get_session(e: dict[str, Any]) -> Optional[models.Session]:
+            try:
+                return models.Session.model_validate(e["session"])
+            except Exception:
+                return None
+
+        return InitialStateApiUtilsResponse(
+            raw=raw,
+            user=get_user(raw.initial_state),
+            session=get_session(raw.initial_state),
+        )

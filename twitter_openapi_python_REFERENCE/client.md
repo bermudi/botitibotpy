@@ -1,96 +1,195 @@
-# TwitterOpenapiPythonClient
+import json
+import re
+from typing import Any
 
-This class is a client for the Twitter API. It provides methods to access different API endpoints.
+import twitter_openapi_python_generated as twitter
+import twitter_openapi_python_generated.configuration as conf
+import urllib3
 
-## Methods
+from twitter_openapi_python.api import (
+    DefaultApiUtils,
+    InitialStateApiUtils,
+    PostApiUtils,
+    TweetApiUtils,
+    UserApiUtils,
+    UserListApiUtils,
+    UsersApiUtils,
+    V11GetApiUtils,
+    V11PostApiUtils,
+)
 
-### `__init__(self, api: twitter.ApiClient, placeholder: ParamType)`
+ParamType = dict[str, Any]
 
-Initializes the client with an API client and a placeholder.
 
-- `api`: An instance of `twitter.ApiClient`.
-- `placeholder`: A dictionary containing placeholder values.
+class TwitterOpenapiPythonClient:
+    api: twitter.ApiClient
+    placeholder: ParamType
 
-### `get_default_api(self) -> DefaultApiUtils`
+    def __init__(self, api: twitter.ApiClient, placeholder: ParamType):
+        self.api = api
+        self.placeholder = placeholder
 
-Returns an instance of `DefaultApiUtils`.
+    def get_default_api(self) -> DefaultApiUtils:
+        return DefaultApiUtils(twitter.DefaultApi(self.api), self.placeholder)
 
-### `get_initial_state_api(self) -> InitialStateApiUtils`
+    def get_initial_state_api(self) -> InitialStateApiUtils:
+        return InitialStateApiUtils(self.api)
 
-Returns an instance of `InitialStateApiUtils`.
+    def get_post_api(self) -> PostApiUtils:
+        return PostApiUtils(twitter.PostApi(self.api), self.placeholder)
 
-### `get_post_api(self) -> PostApiUtils`
+    def get_tweet_api(self) -> TweetApiUtils:
+        return TweetApiUtils(twitter.TweetApi(self.api), self.placeholder)
 
-Returns an instance of `PostApiUtils`.
+    def get_user_api(self) -> UserApiUtils:
+        return UserApiUtils(twitter.UserApi(self.api), self.placeholder)
 
-### `get_tweet_api(self) -> TweetApiUtils`
+    def get_users_api(self) -> UsersApiUtils:
+        return UsersApiUtils(twitter.UsersApi(self.api), self.placeholder)
 
-Returns an instance of `TweetApiUtils`.
+    def get_user_list_api(self) -> UserListApiUtils:
+        return UserListApiUtils(twitter.UserListApi(self.api), self.placeholder)
 
-### `get_user_api(self) -> UserApiUtils`
+    def get_v11_get_api(self) -> V11GetApiUtils:
+        return V11GetApiUtils(twitter.V11GetApi(self.api), self.placeholder)
 
-Returns an instance of `UserApiUtils`.
+    def get_v11_post_api(self) -> V11PostApiUtils:
+        return V11PostApiUtils(twitter.V11PostApi(self.api), self.placeholder)
 
-### `get_users_api(self) -> UsersApiUtils`
 
-Returns an instance of `UsersApiUtils`.
+class TwitterOpenapiPython:
+    hash: str = "4b27150977e1bdd807de8969dc0ddd7918ac9923"
+    placeholder_url = "https://raw.githubusercontent.com/fa0311/twitter-openapi/{hash}/src/config/placeholder.json"
+    header = "https://raw.githubusercontent.com/fa0311/latest-user-agent/refs/heads/main/header.json"
+    access_token: str = "AAAAAAAAAAAAAAAAAAAAANRILgAAAAAAnNwIzUejRCOuH5E6I8xnZz4puTs%3D1Zv7ttfk8LF81IUq16cHjhLTvJu4FA33AGWWjCpTnA"
+    twitter_url: str = "https://x.com/home"
+    additional_browser_headers = {}
+    additional_api_headers = {}
 
-### `get_user_list_api(self) -> UserListApiUtils`
+    def get_header(self) -> tuple[dict[str, str], dict[str, str]]:
+        http = urllib3.PoolManager()
+        res = http.request("GET", self.header)
+        data = json.loads(res.data)
+        ignore = ["host", "connection"]
 
-Returns an instance of `UserListApiUtils`.
+        def getHader(name: str) -> dict[str, str]:
+            return {
+                key: value for key, value in data[name].items() if key not in ignore
+            }
 
-### `get_v11_get_api(self) -> V11GetApiUtils`
+        return (
+            {
+                **getHader("chrome-fetch"),
+                "accept-encoding": "identity",
+                "referer": self.twitter_url,
+                "priority": "u=1, i",
+                "x-twitter-client-language": "en",
+                "x-twitter-active-user": "yes",
+                # 'x-twitter-auth-type': 'xxxx'
+                # 'x-csrf-token': 'xxxx',
+                # 'x-guest-token': 'xxxx',
+                "authorization": f"Bearer {self.access_token}",
+                **self.additional_api_headers,
+            },
+            {
+                **getHader("chrome"),
+                **self.additional_browser_headers,
+            },
+        )
 
-Returns an instance of `V11GetApiUtils`.
+    def remove_prefix(self, text: str) -> str:
+        if text.startswith("x-twitter-"):
+            return text[10:]
+        if text.startswith("x-"):
+            return text[2:]
+        return text
 
-### `get_v11_post_api(self) -> V11PostApiUtils`
+    def kebab_to_upper_camel(self, text: dict[str, Any]) -> dict[str, Any]:
+        res = {}
+        for key, value in text.items():
+            new_key = "".join(
+                [x.capitalize() for x in self.remove_prefix(key).split("-")]
+            )
+            res[new_key] = value
+        return res
 
-Returns an instance of `V11PostApiUtils`.
+    def cookie_normalize(self, cookie: list[str]) -> dict[str, str]:
+        return {
+            x.split("; ")[0].split("=")[0]: x.split("; ")[0].split("=")[1]
+            for x in cookie
+        }
 
-# TwitterOpenapiPython
+    def cookie_to_str(self, cookie: dict[str, str]) -> str:
+        return "; ".join([f"{key}={value}" for key, value in cookie.items()])
 
-This class provides methods to create and configure the Twitter API client.
+    def get_twitter_openapi_python_client(
+        self,
+        api: twitter.ApiClient,
+    ) -> TwitterOpenapiPythonClient:
+        http = urllib3.PoolManager()
+        flag = http.request("GET", self.placeholder_url.format(hash=self.hash))
+        return TwitterOpenapiPythonClient(api, json.loads(flag.data))
 
-## Attributes
+    def get_client_from_cookies(
+        self,
+        cookies: dict[str, str],
+    ) -> TwitterOpenapiPythonClient:
+        api_key = self.kebab_to_upper_camel(self.get_header()[0])
 
-- `hash`: A string representing the hash of the project.
-- `placeholder_url`: A string representing the URL for the placeholder JSON file.
-- `header`: A string representing the URL for the header JSON file.
-- `access_token`: A string representing the access token.
-- `twitter_url`: A string representing the Twitter URL.
-- `additional_browser_headers`: A dictionary for additional browser headers.
-- `additional_api_headers`: A dictionary for additional API headers.
+        if cookies.get("ct0"):
+            api_key.update({"AuthType": "OAuth2Session"})
+            api_key.update({"CsrfToken": cookies["ct0"]})
 
-## Methods
+        if cookies.get("gt"):
+            api_key.update({"GuestToken": cookies["gt"]})
 
-### `get_header(self) -> tuple[dict[str, str], dict[str, str]]`
+        api_conf = conf.Configuration(api_key=api_key)
+        api_conf.access_token = self.access_token
+        api_client = twitter.ApiClient(
+            configuration=api_conf,
+            cookie=self.cookie_to_str(cookies),
+        )
+        api_client.user_agent = api_key["UserAgent"]
+        return self.get_twitter_openapi_python_client(api_client)
 
-Retrieves the header information from the header URL.
+    def get_guest_client(self) -> TwitterOpenapiPythonClient:
+        http = urllib3.PoolManager()
+        session = {}
 
-### `remove_prefix(self, text: str) -> str`
+        header = self.get_header()
 
-Removes the "x-twitter-" or "x-" prefix from a string.
+        res_1 = http.request(
+            "GET",
+            self.twitter_url,
+            redirect=False,
+            headers=header[1],
+        )
+        cookie = res_1.headers._container["set-cookie"][1:]
+        session.update(self.cookie_normalize(cookie))
+        res_2 = http.request(
+            "GET",
+            self.twitter_url,
+            redirect=False,
+            headers=header[1],
+        )
 
-### `kebab_to_upper_camel(self, text: dict[str, Any]) -> dict[str, Any]`
+        find = re.findall(r'document.cookie="(.*?)";', res_2.data.decode())
+        session.update(self.cookie_normalize(find))
 
-Converts keys from kebab-case to UpperCamelCase.
+        session.pop("ct0")
 
-### `cookie_normalize(self, cookie: list[str]) -> dict[str, str]`
+        if not session.get("gt"):
+            activate_header = header[0] | {
+                "cookie": self.cookie_to_str(session),
+            }
+            res_3 = http.request(
+                "POST",
+                "https://api.x.com/1.1/guest/activate.json",
+                headers=activate_header,
+            )
+            gt = json.loads(res_3.data.decode())["guest_token"]
+            session.update({"gt": gt})
 
-Normalizes a list of cookie strings into a dictionary.
+        # ct0 = cookies.get("ct0", "".join(random.choices("0123456789abcdef", k=32)))
 
-### `cookie_to_str(self, cookie: dict[str, str]) -> str`
-
-Converts a cookie dictionary to a string.
-
-### `get_twitter_openapi_python_client(self, api: twitter.ApiClient) -> TwitterOpenapiPythonClient`
-
-Creates a `TwitterOpenapiPythonClient` instance.
-
-### `get_client_from_cookies(self, cookies: dict[str, str]) -> TwitterOpenapiPythonClient`
-
-Creates a `TwitterOpenapiPythonClient` instance from cookies.
-
-### `get_guest_client(self) -> TwitterOpenapiPythonClient`
-
-Creates a `TwitterOpenapiPythonClient` instance for guest users.
+        return self.get_client_from_cookies(session)

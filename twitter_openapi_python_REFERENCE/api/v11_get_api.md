@@ -1,36 +1,70 @@
-# V11GetApiUtils
+from typing import Any, Callable, Optional, TypeVar
 
-This class provides utility functions for the v1.1 GET API endpoints.
+import twitter_openapi_python_generated as twitter
 
-## Methods
+from twitter_openapi_python.models import TwitterApiUtilsResponse
+from twitter_openapi_python.utils import build_response, get_legacy_kwargs
 
-### `__init__(self, api: twitter.V11GetApi, flag: ParamType)`
+T = TypeVar("T")
+ApiFnType = Callable[..., twitter.ApiResponse[T]]
+ParamType = dict[str, Any]
 
-Initializes the utility with an API client and a flag.
 
-- `api`: An instance of `twitter.V11GetApi`.
-- `flag`: A dictionary containing flag values.
+class V11GetApiUtils:
+    api: twitter.V11GetApi
+    flag: ParamType
 
-### `request(self, apiFn: ApiFnType[T], key: str, param: ParamType) -> TwitterApiUtilsResponse[T]`
+    def __init__(self, api: twitter.V11GetApi, flag: ParamType):
+        self.api = api
+        self.flag = flag
 
-A generic request method that calls an API function and builds a `TwitterApiUtilsResponse`.
+    def request(
+        self,
+        apiFn: "ApiFnType[T]",
+        key: str,
+        param: ParamType,
+    ) -> TwitterApiUtilsResponse[T]:
+        args = get_legacy_kwargs(flag=self.flag[key], additional=param)
+        res = apiFn(**args)
+        data = res.data
+        if not isinstance(data, type):
+            raise Exception("Error")
+        return build_response(response=res, data=data)
 
-- `apiFn`: The API function to call.
-- `key`: The key to use for the flag.
-- `param`: Additional parameters for the API call.
+    def get_friends_following_list(
+        self,
+        user_id: str,
+        cursor: Optional[str] = None,
+        count: Optional[int] = None,
+        extra_param: Optional[ParamType] = None,
+    ) -> TwitterApiUtilsResponse[None]:
+        param: ParamType = {"user_id": user_id}
+        if cursor is not None:
+            param["cursor"] = cursor
+        if count is not None:
+            param["count"] = count
+        if extra_param is not None:
+            param.update(extra_param)
 
-### `get_friends_following_list(self, user_id: str, cursor: Optional[str] = None, count: Optional[int] = None, extra_param: Optional[ParamType] = None) -> TwitterApiUtilsResponse[None]`
+        response = self.request(
+            apiFn=self.api.get_friends_following_list_with_http_info,
+            param=param,
+            key="friends/following/list.json",
+        )
+        return response
 
-Retrieves a list of users that a user is following.
+    def get_search_typeahead(
+        self,
+        q: str,
+        extra_param: Optional[ParamType] = None,
+    ) -> TwitterApiUtilsResponse[None]:
+        param = {"q": q}
+        if extra_param is not None:
+            param.update(extra_param)
 
-- `user_id`: The ID of the user.
-- `cursor`: The cursor for pagination.
-- `count`: The number of items to retrieve.
-- `extra_param`: Additional parameters for the API call.
-
-### `get_search_typeahead(self, q: str, extra_param: Optional[ParamType] = None) -> TwitterApiUtilsResponse[None]`
-
-Retrieves search typeahead suggestions.
-
-- `q`: The search query.
-- `extra_param`: Additional parameters for the API call.
+        response = self.request(
+            apiFn=self.api.get_search_typeahead_with_http_info,
+            param=param,
+            key="search/typeahead.json",
+        )
+        return response

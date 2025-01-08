@@ -1,7 +1,9 @@
-# BaseModel
+from typing import TypeVar
 
-This class is a base model for all other models in the project. It inherits from Pydantic's BaseModel and allows arbitrary types.
+from pydantic import BaseModel as PydanticBaseModel
 
-## Attributes
+T = TypeVar("T")
 
-- `model_config`: A dictionary containing configuration options for the model. In this case, it allows arbitrary types.
+
+class BaseModel(PydanticBaseModel):
+    model_config = {"arbitrary_types_allowed": True}

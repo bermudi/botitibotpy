@@ -1,34 +1,66 @@
-# V11PostApiUtils
+from typing import Any, Callable, Optional, TypeVar
 
-This class provides utility functions for the v1.1 POST API endpoints.
+import twitter_openapi_python_generated as twitter
 
-## Methods
+from twitter_openapi_python.models import TwitterApiUtilsResponse
+from twitter_openapi_python.utils import build_response, get_legacy_kwargs
 
-### `__init__(self, api: twitter.V11PostApi, flag: ParamType)`
+T = TypeVar("T")
+ApiFnType = Callable[..., twitter.ApiResponse[T]]
+ParamType = dict[str, Any]
 
-Initializes the utility with an API client and a flag.
 
-- `api`: An instance of `twitter.V11PostApi`.
-- `flag`: A dictionary containing flag values.
+class V11PostApiUtils:
+    api: twitter.V11PostApi
+    flag: ParamType
 
-### `request(self, apiFn: ApiFnType[T], key: str, param: ParamType) -> TwitterApiUtilsResponse[T]`
+    def __init__(self, api: twitter.V11PostApi, flag: ParamType):
+        self.api = api
+        self.flag = flag
 
-A generic request method that calls an API function and builds a `TwitterApiUtilsResponse`.
+    def request(
+        self,
+        apiFn: "ApiFnType[T]",
+        key: str,
+        param: ParamType,
+    ) -> TwitterApiUtilsResponse[T]:
+        args = get_legacy_kwargs(flag=self.flag[key], additional=param)
+        res = apiFn(**args)
+        data = res.data
 
-- `apiFn`: The API function to call.
-- `key`: The key to use for the flag.
-- `param`: Additional parameters for the API call.
+        if not isinstance(data, type):
+            raise Exception("Error")
 
-### `post_create_friendships(self, user_id: str, extra_param: Optional[ParamType] = None) -> TwitterApiUtilsResponse[None]`
+        return build_response(response=res, data=data)
 
-Creates a friendship (follows a user).
+    def post_create_friendships(
+        self,
+        user_id: str,
+        extra_param: Optional[ParamType] = None,
+    ) -> TwitterApiUtilsResponse[None]:
+        param = {"user_id": user_id}
+        if extra_param is not None:
+            param.update(extra_param)
 
-- `user_id`: The ID of the user to follow.
-- `extra_param`: Additional parameters for the API call.
+        response = self.request(
+            apiFn=self.api.post_create_friendships_with_http_info,
+            param=param,
+            key="friendships/create.json",
+        )
+        return response
 
-### `post_destroy_friendships(self, user_id: str, extra_param: Optional[ParamType] = None) -> TwitterApiUtilsResponse[None]`
+    def post_destroy_friendships(
+        self,
+        user_id: str,
+        extra_param: Optional[ParamType] = None,
+    ) -> TwitterApiUtilsResponse[None]:
+        param = {"user_id": user_id}
+        if extra_param is not None:
+            param.update(extra_param)
 
-Destroys a friendship (unfollows a user).
-
-- `user_id`: The ID of the user to unfollow.
-- `extra_param`: Additional parameters for the API call.
+        response = self.request(
+            apiFn=self.api.post_destroy_friendships_with_http_info,
+            param=param,
+            key="friendships/destroy.json",
+        )
+        return response

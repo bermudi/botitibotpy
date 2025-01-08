@@ -1,109 +1,298 @@
-# TweetApiUtils
+from typing import Any, Callable, List, Optional, TypeVar
 
-This class provides utility functions for the tweet API endpoints.
+import twitter_openapi_python_generated as twitter
+import twitter_openapi_python_generated.models as models
 
-## Methods
+from twitter_openapi_python.models import (
+    ApiUtilsRaw,
+    TimelineApiUtilsResponse,
+    TweetApiUtilsData,
+    TwitterApiUtilsResponse,
+)
+from twitter_openapi_python.utils import (
+    build_response,
+    entries_cursor,
+    error_check,
+    get_kwargs,
+    instruction_to_entry,
+    tweet_entries_converter,
+)
 
-### `__init__(self, api: twitter.TweetApi, flag: ParamType)`
+T = TypeVar("T")
+ResponseType = TwitterApiUtilsResponse[TimelineApiUtilsResponse[TweetApiUtilsData]]
+ApiFnType = Callable[..., twitter.ApiResponse[T]]
+ParamType = dict[str, Any]
 
-Initializes the utility with an API client and a flag.
 
-- `api`: An instance of `twitter.TweetApi`.
-- `flag`: A dictionary containing flag values.
+class TweetApiUtils:
+    api: twitter.TweetApi
+    flag: ParamType
 
-### `request(self, apiFn: ApiFnType[T], convertFn: Callable[[T], List[models.InstructionUnion]], key: str, param: ParamType) -> ResponseType`
+    def __init__(self, api: twitter.TweetApi, flag: ParamType):
+        self.api = api
+        self.flag = flag
 
-A generic request method that calls an API function, converts the response, and builds a `TwitterApiUtilsResponse`.
+    def request(
+        self,
+        apiFn: "ApiFnType[T]",
+        convertFn: Callable[[T], List[models.InstructionUnion]],
+        key: str,
+        param: ParamType,
+    ) -> ResponseType:
+        args = get_kwargs(flag=self.flag[key], additional=param)
+        res = apiFn(**args)
+        instruction = convertFn(res.data)
+        entry = instruction_to_entry(instruction)
+        tweet_list = tweet_entries_converter(entry)
+        raw = ApiUtilsRaw(
+            instruction=instruction,
+            entry=entry,
+        )
+        data = TimelineApiUtilsResponse[TweetApiUtilsData](
+            raw=raw,
+            cursor=entries_cursor(entry),
+            data=tweet_list,
+        )
+        return build_response(res, data)
 
-- `apiFn`: The API function to call.
-- `convertFn`: A function to convert the response data.
-- `key`: The key to use for the flag.
-- `param`: Additional parameters for the API call.
+    def get_tweet_detail(
+        self,
+        focal_tweet_id: str,
+        cursor: Optional[str] = None,
+        controller_data: Optional[str] = None,
+        extra_param: Optional[ParamType] = None,
+    ) -> ResponseType:
+        param: ParamType = {"focalTweetId": focal_tweet_id}
+        if cursor is not None:
+            param["cursor"] = cursor
+        if controller_data is not None:
+            param["controller_data"] = controller_data
+        if extra_param is not None:
+            param.update(extra_param)
 
-### `get_tweet_detail(self, focal_tweet_id: str, cursor: Optional[str] = None, controller_data: Optional[str] = None, extra_param: Optional[ParamType] = None) -> ResponseType`
+        response = self.request(
+            apiFn=self.api.get_tweet_detail_with_http_info,
+            convertFn=lambda e: error_check(e.data.threaded_conversation_with_injections_v2, e.errors).instructions,
+            key="TweetDetail",
+            param=param,
+        )
+        return response
 
-Retrieves details of a tweet.
+    def get_search_timeline(
+        self,
+        raw_query: str,
+        product: Optional[str] = None,
+        cursor: Optional[str] = None,
+        count: Optional[int] = None,
+        extra_param: Optional[ParamType] = None,
+    ) -> ResponseType:
+        param: ParamType = {"rawQuery": raw_query}
+        if product is not None:
+            param["product"] = product
+        if cursor is not None:
+            param["cursor"] = cursor
+        if count is not None:
+            param["count"] = count
+        if extra_param is not None:
+            param.update(extra_param)
 
-- `focal_tweet_id`: The ID of the tweet.
-- `cursor`: The cursor for pagination.
-- `controller_data`: Additional controller data.
-- `extra_param`: Additional parameters for the API call.
+        response = self.request(
+            apiFn=self.api.get_search_timeline_with_http_info,
+            convertFn=lambda e: error_check(e.data.search_by_raw_query, e.errors).search_timeline.timeline.instructions,
+            key="SearchTimeline",
+            param=param,
+        )
+        return response
 
-### `get_search_timeline(self, raw_query: str, product: Optional[str] = None, cursor: Optional[str] = None, count: Optional[int] = None, extra_param: Optional[ParamType] = None) -> ResponseType`
+    def get_home_timeline(
+        self,
+        cursor: Optional[str] = None,
+        count: Optional[int] = None,
+        extra_param: Optional[ParamType] = None,
+    ) -> ResponseType:
+        param: ParamType = {}
+        if cursor is not None:
+            param["cursor"] = cursor
+        if count is not None:
+            param["count"] = count
+        if extra_param is not None:
+            param.update(extra_param)
 
-Retrieves a search timeline.
+        response = self.request(
+            apiFn=self.api.get_home_timeline_with_http_info,
+            convertFn=lambda e: error_check(e.data.home, e.errors).home_timeline_urt.instructions,
+            key="HomeTimeline",
+            param=param,
+        )
+        return response
 
-- `raw_query`: The search query.
-- `product`: The product type.
-- `cursor`: The cursor for pagination.
-- `count`: The number of items to retrieve.
-- `extra_param`: Additional parameters for the API call.
+    def get_home_latest_timeline(
+        self,
+        cursor: Optional[str] = None,
+        count: Optional[int] = None,
+        extra_param: Optional[ParamType] = None,
+    ) -> ResponseType:
+        param: ParamType = {}
+        if cursor is not None:
+            param["cursor"] = cursor
+        if count is not None:
+            param["count"] = count
+        if extra_param is not None:
+            param.update(extra_param)
 
-### `get_home_timeline(self, cursor: Optional[str] = None, count: Optional[int] = None, extra_param: Optional[ParamType] = None) -> ResponseType`
+        response = self.request(
+            apiFn=self.api.get_home_latest_timeline_with_http_info,
+            convertFn=lambda e: error_check(e.data.home, e.errors).home_timeline_urt.instructions,
+            key="HomeLatestTimeline",
+            param=param,
+        )
+        return response
 
-Retrieves the home timeline.
+    def get_list_latest_tweets_timeline(
+        self,
+        list_id: str,
+        cursor: Optional[str] = None,
+        count: Optional[int] = None,
+        extra_param: Optional[ParamType] = None,
+    ) -> ResponseType:
+        param: ParamType = {"listId": list_id}
+        if cursor is not None:
+            param["cursor"] = cursor
+        if count is not None:
+            param["count"] = count
+        if extra_param is not None:
+            param.update(extra_param)
 
-- `cursor`: The cursor for pagination.
-- `count`: The number of items to retrieve.
-- `extra_param`: Additional parameters for the API call.
+        response = self.request(
+            apiFn=self.api.get_list_latest_tweets_timeline_with_http_info,
+            convertFn=lambda e: error_check(
+                error_check(e.data.list, e.errors).tweets_timeline.timeline, e.errors
+            ).instructions,
+            key="ListLatestTweetsTimeline",
+            param=param,
+        )
+        return response
 
-### `get_home_latest_timeline(self, cursor: Optional[str] = None, count: Optional[int] = None, extra_param: Optional[ParamType] = None) -> ResponseType`
+    def get_user_tweets(
+        self,
+        user_id: str,
+        cursor: Optional[str] = None,
+        count: Optional[int] = None,
+        extra_param: Optional[ParamType] = None,
+    ) -> ResponseType:
+        param: ParamType = {"userId": user_id}
+        if cursor is not None:
+            param["cursor"] = cursor
+        if count is not None:
+            param["count"] = count
+        if extra_param is not None:
+            param.update(extra_param)
 
-Retrieves the latest home timeline.
+        response = self.request(
+            apiFn=self.api.get_user_tweets_with_http_info,
+            convertFn=lambda e: error_check(
+                error_check(e.data.user, e.errors).result.timeline_v2.timeline, e.errors
+            ).instructions,
+            key="UserTweets",
+            param=param,
+        )
+        return response
 
-- `cursor`: The cursor for pagination.
-- `count`: The number of items to retrieve.
-- `extra_param`: Additional parameters for the API call.
+    def get_user_tweets_and_replies(
+        self,
+        user_id: str,
+        cursor: Optional[str] = None,
+        count: Optional[int] = None,
+        extra_param: Optional[ParamType] = None,
+    ) -> ResponseType:
+        param: ParamType = {"userId": user_id}
+        if cursor is not None:
+            param["cursor"] = cursor
+        if count is not None:
+            param["count"] = count
+        if extra_param is not None:
+            param.update(extra_param)
 
-### `get_list_latest_tweets_timeline(self, list_id: str, cursor: Optional[str] = None, count: Optional[int] = None, extra_param: Optional[ParamType] = None) -> ResponseType`
+        response = self.request(
+            apiFn=self.api.get_user_tweets_and_replies_with_http_info,
+            convertFn=lambda e: error_check(
+                error_check(e.data.user, e.errors).result.timeline_v2.timeline, e.errors
+            ).instructions,
+            key="UserTweetsAndReplies",
+            param=param,
+        )
+        return response
 
-Retrieves the latest tweets from a list.
+    def get_user_media(
+        self,
+        user_id: str,
+        cursor: Optional[str] = None,
+        count: Optional[int] = None,
+        extra_param: Optional[ParamType] = None,
+    ) -> ResponseType:
+        param: ParamType = {"userId": user_id}
+        if cursor is not None:
+            param["cursor"] = cursor
+        if count is not None:
+            param["count"] = count
+        if extra_param is not None:
+            param.update(extra_param)
 
-- `list_id`: The ID of the list.
-- `cursor`: The cursor for pagination.
-- `count`: The number of items to retrieve.
-- `extra_param`: Additional parameters for the API call.
+        response = self.request(
+            apiFn=self.api.get_user_media_with_http_info,
+            convertFn=lambda e: error_check(
+                error_check(e.data.user, e.errors).result.timeline_v2.timeline, e.errors
+            ).instructions,
+            key="UserMedia",
+            param=param,
+        )
+        return response
 
-### `get_user_tweets(self, user_id: str, cursor: Optional[str] = None, count: Optional[int] = None, extra_param: Optional[ParamType] = None) -> ResponseType`
+    def get_likes(
+        self,
+        user_id: str,
+        cursor: Optional[str] = None,
+        count: Optional[int] = None,
+        extra_param: Optional[ParamType] = None,
+    ) -> ResponseType:
+        param: ParamType = {"userId": user_id}
+        if cursor is not None:
+            param["cursor"] = cursor
+        if count is not None:
+            param["count"] = count
+        if extra_param is not None:
+            param.update(extra_param)
 
-Retrieves tweets from a user.
+        response = self.request(
+            apiFn=self.api.get_likes_with_http_info,
+            convertFn=lambda e: error_check(
+                error_check(e.data.user, e.errors).result.timeline_v2.timeline, e.errors
+            ).instructions,
+            key="Likes",
+            param=param,
+        )
+        return response
 
-- `user_id`: The ID of the user.
-- `cursor`: The cursor for pagination.
-- `count`: The number of items to retrieve.
-- `extra_param`: Additional parameters for the API call.
+    def get_bookmarks(
+        self,
+        cursor: Optional[str] = None,
+        count: Optional[int] = None,
+        extra_param: Optional[ParamType] = None,
+    ) -> ResponseType:
+        param: ParamType = {}
+        if cursor is not None:
+            param["cursor"] = cursor
+        if count is not None:
+            param["count"] = count
+        if extra_param is not None:
+            param.update(extra_param)
 
-### `get_user_tweets_and_replies(self, user_id: str, cursor: Optional[str] = None, count: Optional[int] = None, extra_param: Optional[ParamType] = None) -> ResponseType`
-
-Retrieves tweets and replies from a user.
-
-- `user_id`: The ID of the user.
-- `cursor`: The cursor for pagination.
-- `count`: The number of items to retrieve.
-- `extra_param`: Additional parameters for the API call.
-
-### `get_user_media(self, user_id: str, cursor: Optional[str] = None, count: Optional[int] = None, extra_param: Optional[ParamType] = None) -> ResponseType`
-
-Retrieves media from a user.
-
-- `user_id`: The ID of the user.
-- `cursor`: The cursor for pagination.
-- `count`: The number of items to retrieve.
-- `extra_param`: Additional parameters for the API call.
-
-### `get_likes(self, user_id: str, cursor: Optional[str] = None, count: Optional[int] = None, extra_param: Optional[ParamType] = None) -> ResponseType`
-
-Retrieves likes from a user.
-
-- `user_id`: The ID of the user.
-- `cursor`: The cursor for pagination.
-- `count`: The number of items to retrieve.
-- `extra_param`: Additional parameters for the API call.
-
-### `get_bookmarks(self, cursor: Optional[str] = None, count: Optional[int] = None, extra_param: Optional[ParamType] = None) -> ResponseType`
-
-Retrieves bookmarks.
-
-- `cursor`: The cursor for pagination.
-- `count`: The number of items to retrieve.
-- `extra_param`: Additional parameters for the API call.
+        response = self.request(
+            apiFn=self.api.get_bookmarks_with_http_info,
+            convertFn=lambda e: error_check(
+                error_check(e.data, e.errors).bookmark_timeline_v2.timeline, e.errors
+            ).instructions,
+            key="Bookmarks",
+            param=param,
+        )
+        return response

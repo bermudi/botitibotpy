@@ -1,35 +1,78 @@
-# UserApiUtils
+from typing import Any, Callable, Optional, TypeVar
 
-This class provides utility functions for the user API endpoints.
+import twitter_openapi_python_generated as twitter
+import twitter_openapi_python_generated.models as models
 
-## Methods
+from twitter_openapi_python.models import TwitterApiUtilsResponse, UserApiUtilsData
+from twitter_openapi_python.utils import (
+    build_response,
+    error_check,
+    get_kwargs,
+    user_or_null_converter,
+)
 
-### `__init__(self, api: twitter.UserApi, flag: ParamType)`
+T = TypeVar("T")
+ResponseType = TwitterApiUtilsResponse[UserApiUtilsData]
+ApiFnType = Callable[..., twitter.ApiResponse[T]]
+ParamType = dict[str, Any]
 
-Initializes the utility with an API client and a flag.
 
-- `api`: An instance of `twitter.UserApi`.
-- `flag`: A dictionary containing flag values.
+class UserApiUtils:
+    api: twitter.UserApi
+    flag: ParamType
 
-### `request(self, apiFn: ApiFnType[T], convertFn: Callable[[T], models.UserResults], key: str, param: ParamType) -> ResponseType`
+    def __init__(self, api: twitter.UserApi, flag: ParamType):
+        self.api = api
+        self.flag = flag
 
-A generic request method that calls an API function, converts the response, and builds a `TwitterApiUtilsResponse`.
+    def request(
+        self,
+        apiFn: "ApiFnType[T]",
+        convertFn: Callable[[T], models.UserResults],
+        key: str,
+        param: ParamType,
+    ) -> ResponseType:
+        args = get_kwargs(flag=self.flag[key], additional=param)
+        res = apiFn(**args)
+        result = convertFn(res.data)
+        if result.result is None:
+            raise Exception("No user")
+        user = user_or_null_converter(result.result)
+        if user is None:
+            raise Exception("No user")
+        data = UserApiUtilsData(
+            raw=result,
+            user=user,
+        )
 
-- `apiFn`: The API function to call.
-- `convertFn`: A function to convert the response data.
-- `key`: The key to use for the flag.
-- `param`: Additional parameters for the API call.
+        return build_response(response=res, data=data)
 
-### `get_user_by_screen_name(self, screen_name: str, extra_param: Optional[ParamType] = None) -> ResponseType`
+    def get_user_by_screen_name(
+        self,
+        screen_name: str,
+        extra_param: Optional[ParamType] = None,
+    ) -> ResponseType:
+        param: ParamType = {"screen_name": screen_name}
+        if extra_param is not None:
+            param.update(extra_param)
+        return self.request(
+            apiFn=self.api.get_user_by_screen_name_with_http_info,
+            convertFn=lambda e: error_check(e.data.user, e.errors),
+            key="UserByScreenName",
+            param=param,
+        )
 
-Retrieves a user by their screen name.
-
-- `screen_name`: The screen name of the user.
-- `extra_param`: Additional parameters for the API call.
-
-### `get_user_by_rest_id(self, user_id: str, extra_param: Optional[ParamType] = None) -> ResponseType`
-
-Retrieves a user by their REST ID.
-
-- `user_id`: The ID of the user.
-- `extra_param`: Additional parameters for the API call.
+    def get_user_by_rest_id(
+        self,
+        user_id: str,
+        extra_param: Optional[ParamType] = None,
+    ) -> ResponseType:
+        param: ParamType = {"userId": user_id}
+        if extra_param is not None:
+            param.update(extra_param)
+        return self.request(
+            apiFn=self.api.get_user_by_rest_id_with_http_info,
+            convertFn=lambda e: error_check(e.data.user, e.errors),
+            key="UserByRestId",
+            param=param,
+        )

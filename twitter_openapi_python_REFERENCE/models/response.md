@@ -1,17 +1,19 @@
-# TwitterApiUtilsRaw
+from typing import Generic, TypeVar
 
-This class represents the raw response from the Twitter API.
+import twitter_openapi_python_generated as twitter
+from pydantic import Field
 
-## Attributes
+from twitter_openapi_python.models import ApiUtilsHeader, BaseModel
 
-- `response`: An instance of `twitter.ApiResponse` containing the raw response data.
+T1 = TypeVar("T1")
+T2 = TypeVar("T2")
 
-# TwitterApiUtilsResponse
 
-This class represents a generic response from the Twitter API.
+class TwitterApiUtilsRaw(BaseModel):
+    response: twitter.ApiResponse = Field()
 
-## Attributes
 
-- `raw`: An instance of `TwitterApiUtilsRaw` containing the raw response data.
-- `data`: The data payload of the response, which can be of any type.
-- `header`: An instance of `ApiUtilsHeader` containing the response headers.
+class TwitterApiUtilsResponse(BaseModel, Generic[T1]):
+    raw: TwitterApiUtilsRaw = Field()
+    data: T1 = Field()
+    header: ApiUtilsHeader = Field()

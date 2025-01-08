@@ -1,28 +1,54 @@
-# UsersApiUtils
+from typing import Any, Callable, Optional, TypeVar
 
-This class provides utility functions for the users API endpoints.
+import twitter_openapi_python_generated as twitter
+import twitter_openapi_python_generated.models as models
 
-## Methods
+from twitter_openapi_python.models import TwitterApiUtilsResponse, UserApiUtilsData
+from twitter_openapi_python.utils import (
+    build_response,
+    error_check,
+    get_kwargs,
+    user_result_converter,
+)
 
-### `__init__(self, api: twitter.UsersApi, flag: ParamType)`
+T = TypeVar("T")
+ResponseType = TwitterApiUtilsResponse[list[UserApiUtilsData]]
+ApiFnType = Callable[..., twitter.ApiResponse[T]]
+ParamType = dict[str, Any]
 
-Initializes the utility with an API client and a flag.
 
-- `api`: An instance of `twitter.UsersApi`.
-- `flag`: A dictionary containing flag values.
+class UsersApiUtils:
+    api: twitter.UsersApi
+    flag: ParamType
 
-### `request(self, apiFn: ApiFnType[T], convertFn: Callable[[T], list[models.UserResults]], key: str, param: ParamType) -> ResponseType`
+    def __init__(self, api: twitter.UsersApi, flag: ParamType):
+        self.api = api
+        self.flag = flag
 
-A generic request method that calls an API function, converts the response, and builds a `TwitterApiUtilsResponse`.
+    def request(
+        self,
+        apiFn: "ApiFnType[T]",
+        convertFn: Callable[[T], list[models.UserResults]],
+        key: str,
+        param: ParamType,
+    ) -> ResponseType:
+        args = get_kwargs(flag=self.flag[key], additional=param)
+        res = apiFn(**args)
+        user_result = convertFn(res.data)
+        user = user_result_converter(user_result)
+        return build_response(response=res, data=user)
 
-- `apiFn`: The API function to call.
-- `convertFn`: A function to convert the response data.
-- `key`: The key to use for the flag.
-- `param`: Additional parameters for the API call.
-
-### `get_users_by_rest_ids(self, user_ids: list[str], extra_param: Optional[ParamType] = None) -> ResponseType`
-
-Retrieves users by their REST IDs.
-
-- `user_ids`: A list of user IDs.
-- `extra_param`: Additional parameters for the API call.
+    def get_users_by_rest_ids(
+        self,
+        user_ids: list[str],
+        extra_param: Optional[ParamType] = None,
+    ) -> ResponseType:
+        param: ParamType = {"userIds": user_ids}
+        if extra_param is not None:
+            param.update(extra_param)
+        return self.request(
+            apiFn=self.api.get_users_by_rest_ids_with_http_info,
+            convertFn=lambda e: error_check(e.data.users, e.errors),
+            key="UsersByRestIds",
+            param=param,
+        )

@@ -1,50 +1,40 @@
-# ApiUtilsRaw
+from typing import Any, Generic, List, Optional, TypeVar
 
-This class represents the raw data for API responses related to timelines.
+# from twitter_openapi_python_generated.api_response import ApiResponse
+import twitter_openapi_python_generated.models as models
+from pydantic import Field
 
-## Attributes
+from twitter_openapi_python.models import BaseModel
 
-- `instruction`: A list of `models.InstructionUnion` objects.
-- `entry`: A list of `models.TimelineAddEntry` objects.
+T = TypeVar("T")
 
-# CursorApiUtilsResponse
 
-This class represents the cursor information for paginated API responses.
+class ApiUtilsRaw(BaseModel):
+    instruction: List[models.InstructionUnion] = Field(default_factory=list)
+    entry: List[models.TimelineAddEntry] = Field(default_factory=list)
 
-## Attributes
 
-- `bottom`: An optional `models.TimelineTimelineCursor` object representing the bottom cursor.
-- `top`: An optional `models.TimelineTimelineCursor` object representing the top cursor.
+class CursorApiUtilsResponse(BaseModel):
+    bottom: Optional[models.TimelineTimelineCursor] = Field(default=None)
+    top: Optional[models.TimelineTimelineCursor] = Field(default=None)
 
-# TweetApiUtilsData
 
-This class represents the data for a tweet in a timeline.
+class TweetApiUtilsData(BaseModel):
+    raw: models.ItemResult = Field()
+    tweet: models.Tweet = Field()
+    user: models.User = Field()
+    replies: List["TweetApiUtilsData"] = Field(default_factory=list)
+    quoted: Optional["TweetApiUtilsData"] = Field(default=None)
+    retweeted: Optional["TweetApiUtilsData"] = Field(default=None)
+    promoted_metadata: Optional[dict[str, Any]] = Field(default=None)
 
-## Attributes
 
-- `raw`: A `models.ItemResult` object containing the raw tweet data.
-- `tweet`: A `models.Tweet` object representing the tweet.
-- `user`: A `models.User` object representing the user who posted the tweet.
-- `replies`: A list of `TweetApiUtilsData` objects representing replies to the tweet.
-- `quoted`: An optional `TweetApiUtilsData` object representing a quoted tweet.
-- `retweeted`: An optional `TweetApiUtilsData` object representing a retweeted tweet.
-- `promoted_metadata`: An optional dictionary containing promoted metadata.
+class UserApiUtilsData(BaseModel):
+    raw: models.UserResults = Field()
+    user: models.User = Field()
 
-# UserApiUtilsData
 
-This class represents the data for a user in a timeline.
-
-## Attributes
-
-- `raw`: A `models.UserResults` object containing the raw user data.
-- `user`: A `models.User` object representing the user.
-
-# TimelineApiUtilsResponse
-
-This class represents a generic response for timeline-related API endpoints.
-
-## Attributes
-
-- `raw`: An `ApiUtilsRaw` object containing the raw timeline data.
-- `cursor`: A `CursorApiUtilsResponse` object containing the cursor information.
-- `data`: A list of type `T` representing the timeline data.
+class TimelineApiUtilsResponse(BaseModel, Generic[T]):
+    raw: ApiUtilsRaw = Field()
+    cursor: CursorApiUtilsResponse = Field()
+    data: List[T] = Field(default_factory=list)
