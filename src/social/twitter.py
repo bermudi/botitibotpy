@@ -177,96 +177,77 @@ class TwitterClient:
         """Fetch a tweet and its replies"""
         try:
             # First get the tweet to get the author's ID
-            tweet_response = self.api.get_tweet_api().get_tweet_detail(
-                focal_tweet_id=tweet_id
-            )
+            tweet = self.api.get_tweet_api().get_tweet_detail(focal_tweet_id=tweet_id)
             
-            logger.debug(f"Raw tweet response type: {type(tweet_response)}")
-            logger.debug(f"Raw tweet response data type: {type(tweet_response.data)}")
-            logger.debug(f"Raw tweet response data: {tweet_response.data}")
+            logger.debug(f"Raw tweet response type: {type(tweet)}")
+            logger.debug(f"Raw tweet response data type: {type(tweet.data)}")
+            logger.debug(f"Raw tweet response data: {tweet.data}")
             
-            if not hasattr(tweet_response, 'data'):
-                logger.error("No data in tweet response")
-                return []
-                
-            # Try to get author ID from different response structures
-            author_id = None
-            
-            # Structure 1: List of entries
-            if isinstance(tweet_response.data, list):
-                for entry in tweet_response.data:
-                    if hasattr(entry, 'tweet_results'):
-                        tweet_result = entry.tweet_results.result
-                        author_id = tweet_result.core.user_results.result.rest_id
-                        logger.debug(f"Found tweet author ID (list): {author_id}")
-                        break
-                    elif hasattr(entry, 'result'):
-                        tweet_result = entry.result
-                        author_id = tweet_result.core.user_results.result.rest_id
-                        logger.debug(f"Found tweet author ID (list.result): {author_id}")
-                        break
-            
-            # Structure 2: Direct tweet_results
-            elif hasattr(tweet_response.data, 'tweet_results'):
-                result = tweet_response.data.tweet_results.result
-                author_id = result.core.user_results.result.rest_id
-                logger.debug(f"Found tweet author ID (direct): {author_id}")
-            
-            if not author_id:
-                logger.error("Could not find author ID in response")
-                return []
-            
-            # Get all tweets and replies from the author
-            response = self.api.get_tweet_api().get_user_tweets_and_replies(
-                user_id=author_id,
-                count=100,  # Get a good number of recent tweets
-                extra_param={
-                    "includeReplies": True
-                }
-            )
-            
-            logger.debug(f"Raw thread response type: {type(response)}")
-            logger.debug(f"Raw thread response data type: {type(response.data)}")
-            logger.debug(f"Raw thread response data: {response.data}")
-            
-            # Extract relevant data from thread response
-            comments = []
-            if hasattr(response, 'data') and isinstance(response.data, list):
-                for tweet_data in response.data:
-                    logger.debug(f"Tweet data type: {type(tweet_data)}")
-                    logger.debug(f"Tweet data attributes: {dir(tweet_data)}")
+            # Get author ID using the same structure as get_tweet_metrics
+            if tweet and hasattr(tweet, 'data'):
+                tweet_data = tweet.data
+                if hasattr(tweet_data, 'tweet_results'):
+                    result = tweet_data.tweet_results.result
+                    author_id = result.core.user_results.result.rest_id
+                    logger.debug(f"Found tweet author ID: {author_id}")
                     
-                    # Try different tweet data structures
-                    tweet = None
-                    user = None
+                    # Get all tweets and replies from the author
+                    response = self.api.get_tweet_api().get_user_tweets_and_replies(
+                        user_id=author_id,
+                        count=100,  # Get a good number of recent tweets
+                        extra_param={
+                            "includeReplies": True
+                        }
+                    )
                     
-                    if hasattr(tweet_data, 'tweet') and hasattr(tweet_data.tweet, 'legacy'):
-                        tweet = tweet_data.tweet
-                        user = tweet_data.user
-                    elif hasattr(tweet_data, 'legacy'):
-                        tweet = tweet_data
-                        user = tweet_data.core.user_results.result
+                    logger.debug(f"Raw thread response type: {type(response)}")
+                    logger.debug(f"Raw thread response data type: {type(response.data)}")
+                    logger.debug(f"Raw thread response data: {response.data}")
                     
-                    if tweet and user:
-                        # Check if this is a reply to our tweet
-                        if (hasattr(tweet.legacy, 'in_reply_to_status_id_str') and 
-                            tweet.legacy.in_reply_to_status_id_str == tweet_id):
-                            logger.debug(f"Found reply from user: {user.legacy.screen_name}")
-                            comments.append({
-                                'id': tweet.rest_id,
-                                'author': user.legacy.screen_name,
-                                'content': tweet.legacy.full_text if hasattr(tweet.legacy, 'full_text') else tweet.legacy.text,
-                                'created_at': tweet.legacy.created_at
-                            })
+                    # Extract relevant data from thread response
+                    comments = []
+                    if hasattr(response, 'data') and isinstance(response.data, list):
+                        for tweet_data in response.data:
+                            logger.debug(f"Tweet data type: {type(tweet_data)}")
+                            logger.debug(f"Tweet data attributes: {dir(tweet_data)}")
+                            
+                            # Try different tweet data structures
+                            tweet = None
+                            user = None
+                            
+                            if hasattr(tweet_data, 'tweet') and hasattr(tweet_data.tweet, 'legacy'):
+                                tweet = tweet_data.tweet
+                                user = tweet_data.user
+                            elif hasattr(tweet_data, 'legacy'):
+                                tweet = tweet_data
+                                user = tweet_data.core.user_results.result
+                            
+                            if tweet and user:
+                                # Check if this is a reply to our tweet
+                                if (hasattr(tweet.legacy, 'in_reply_to_status_id_str') and 
+                                    tweet.legacy.in_reply_to_status_id_str == tweet_id):
+                                    logger.debug(f"Found reply from user: {user.legacy.screen_name}")
+                                    comments.append({
+                                        'id': tweet.rest_id,
+                                        'author': user.legacy.screen_name,
+                                        'content': tweet.legacy.full_text if hasattr(tweet.legacy, 'full_text') else tweet.legacy.text,
+                                        'created_at': tweet.legacy.created_at
+                                    })
+                    
+                    logger.info(f"Successfully fetched thread for tweet {tweet_id} with {len(comments)} replies", extra={
+                        'context': {
+                            'tweet_id': tweet_id,
+                            'reply_count': len(comments),
+                            'component': 'twitter.thread'
+                        }
+                    })
+                    return comments
+                else:
+                    logger.error("No tweet_results in response")
+            else:
+                logger.error("Invalid tweet response structure")
             
-            logger.info(f"Successfully fetched thread for tweet {tweet_id} with {len(comments)} replies", extra={
-                'context': {
-                    'tweet_id': tweet_id,
-                    'reply_count': len(comments),
-                    'component': 'twitter.thread'
-                }
-            })
-            return comments
+            return []
             
         except Exception as e:
             logger.error(f"Error fetching tweet thread: {e}", exc_info=True)
