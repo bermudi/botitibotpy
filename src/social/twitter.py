@@ -189,23 +189,31 @@ class TwitterClient:
                 logger.error("No data in tweet response")
                 return []
                 
-            # The response structure is different - it's a list of entries
+            # Try to get author ID from different response structures
+            author_id = None
+            
+            # Structure 1: List of entries
             if isinstance(tweet_response.data, list):
                 for entry in tweet_response.data:
-                    logger.debug(f"Entry type: {type(entry)}")
-                    logger.debug(f"Entry attributes: {dir(entry)}")
                     if hasattr(entry, 'tweet_results'):
                         tweet_result = entry.tweet_results.result
                         author_id = tweet_result.core.user_results.result.rest_id
-                        logger.debug(f"Found tweet author ID: {author_id}")
+                        logger.debug(f"Found tweet author ID (list): {author_id}")
                         break
                     elif hasattr(entry, 'result'):
                         tweet_result = entry.result
                         author_id = tweet_result.core.user_results.result.rest_id
-                        logger.debug(f"Found tweet author ID: {author_id}")
+                        logger.debug(f"Found tweet author ID (list.result): {author_id}")
                         break
-            else:
-                logger.error("Unexpected tweet response data type")
+            
+            # Structure 2: Direct tweet_results
+            elif hasattr(tweet_response.data, 'tweet_results'):
+                result = tweet_response.data.tweet_results.result
+                author_id = result.core.user_results.result.rest_id
+                logger.debug(f"Found tweet author ID (direct): {author_id}")
+            
+            if not author_id:
+                logger.error("Could not find author ID in response")
                 return []
             
             # Get all tweets and replies from the author
@@ -227,12 +235,22 @@ class TwitterClient:
                 for tweet_data in response.data:
                     logger.debug(f"Tweet data type: {type(tweet_data)}")
                     logger.debug(f"Tweet data attributes: {dir(tweet_data)}")
+                    
+                    # Try different tweet data structures
+                    tweet = None
+                    user = None
+                    
                     if hasattr(tweet_data, 'tweet') and hasattr(tweet_data.tweet, 'legacy'):
                         tweet = tweet_data.tweet
+                        user = tweet_data.user
+                    elif hasattr(tweet_data, 'legacy'):
+                        tweet = tweet_data
+                        user = tweet_data.core.user_results.result
+                    
+                    if tweet and user:
                         # Check if this is a reply to our tweet
                         if (hasattr(tweet.legacy, 'in_reply_to_status_id_str') and 
                             tweet.legacy.in_reply_to_status_id_str == tweet_id):
-                            user = tweet_data.user
                             logger.debug(f"Found reply from user: {user.legacy.screen_name}")
                             comments.append({
                                 'id': tweet.rest_id,
