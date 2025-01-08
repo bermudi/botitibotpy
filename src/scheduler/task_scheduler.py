@@ -371,28 +371,35 @@ class TaskScheduler:
             content = self.content_generator.generate_post(prompt=prompt)
             
             if content:
-                # Post to each configured platform
+                # Post to Twitter if configured
                 if self.twitter_client and self.twitter_client.is_authenticated:
-                    tweet = await self.twitter_client.post_tweet(content)
-                    if tweet:
-                        # Store the post in database
-                        self.db_ops.create_post(
-                            credentials_id=1,  # Twitter credentials
-                            platform_post_id=tweet['id'],
-                            content=content
-                        )
+                    try:
+                        tweet = await self.twitter_client.post_tweet(content)
+                        if tweet:
+                            # Store the post in database
+                            self.db_ops.create_post(
+                                credentials_id=1,  # Twitter credentials
+                                platform_post_id=tweet['id'],
+                                content=content
+                            )
+                            logger.info("Successfully posted content to Twitter")
+                    except Exception as e:
+                        logger.error(f"Error posting to Twitter: {str(e)}", exc_info=True)
                 
-                if self.bluesky_client and self.bluesky_client.is_authenticated:
-                    post = await self.bluesky_client.create_post(content)
-                    if post:
-                        # Store the post in database
-                        self.db_ops.create_post(
-                            credentials_id=2,  # Bluesky credentials
-                            platform_post_id=post['id'],
-                            content=content
-                        )
-                        
-                logger.info("Successfully generated and posted new content")
+                # Post to Bluesky if configured
+                if self.bluesky_client and hasattr(self.bluesky_client, 'is_authenticated') and self.bluesky_client.is_authenticated:
+                    try:
+                        post = await self.bluesky_client.create_post(content)
+                        if post:
+                            # Store the post in database
+                            self.db_ops.create_post(
+                                credentials_id=2,  # Bluesky credentials
+                                platform_post_id=post['id'],
+                                content=content
+                            )
+                            logger.info("Successfully posted content to Bluesky")
+                    except Exception as e:
+                        logger.error(f"Error posting to Bluesky: {str(e)}", exc_info=True)
             else:
                 logger.error("Failed to generate content")
                 
