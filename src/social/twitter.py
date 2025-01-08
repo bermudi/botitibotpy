@@ -264,14 +264,6 @@ class TwitterClient:
             
             # Get user info to get the user ID
             user_info = self.api.get_user_api().get_user_by_screen_name(screen_name=screen_name)
-            logger.debug(f"User info response type: {type(user_info)}")
-            logger.debug(f"User info data type: {type(user_info.data)}")
-            logger.debug(f"User info data dir: {dir(user_info.data)}")
-            logger.debug(f"User info data: {user_info.data}")
-            logger.debug(f"User info data user type: {type(user_info.data.user)}")
-            logger.debug(f"User info data user dir: {dir(user_info.data.user)}")
-            
-            # The user ID is in the data object
             user_id = user_info.data.user.rest_id
             
             # Get user tweets with correct parameters
@@ -280,23 +272,30 @@ class TwitterClient:
                 extra_param={"includeReplies": False, "includeRetweets": True}
             )
             
+            logger.debug(f"Tweets response type: {type(tweets_response)}")
+            logger.debug(f"Tweets response raw type: {type(tweets_response.raw)}")
+            logger.debug(f"Tweets response raw dir: {dir(tweets_response.raw)}")
+            
             # Extract relevant data from tweets response
             tweets = []
-            for tweet_data in tweets_response.data:
-                if hasattr(tweet_data, 'tweet') and hasattr(tweet_data, 'user'):
-                    tweet = tweet_data.tweet
-                    user = tweet_data.user
-                    tweets.append({
-                        'content': tweet.legacy.full_text if hasattr(tweet.legacy, 'full_text') else tweet.legacy.text,
-                        'created_at': tweet.legacy.created_at,
-                        'author': user.legacy.screen_name,
-                        'engagement_metrics': {
-                            'likes': tweet.legacy.favorite_count,
-                            'retweets': tweet.legacy.retweet_count,
-                            'replies': tweet.legacy.reply_count,
-                            'views': tweet.views.count if hasattr(tweet, 'views') else 0
-                        }
-                    })
+            for instruction in tweets_response.raw.instructions:
+                if hasattr(instruction, 'entries'):
+                    for entry in instruction.entries:
+                        if hasattr(entry.content, 'itemContent'):
+                            tweet_result = entry.content.itemContent.tweet_results.result
+                            user_result = tweet_result.core.user_results.result
+                            
+                            tweets.append({
+                                'content': tweet_result.legacy.full_text,
+                                'created_at': tweet_result.legacy.created_at,
+                                'author': user_result.legacy.screen_name,
+                                'engagement_metrics': {
+                                    'likes': tweet_result.legacy.favorite_count,
+                                    'retweets': tweet_result.legacy.retweet_count,
+                                    'replies': tweet_result.legacy.reply_count,
+                                    'views': tweet_result.views.count if hasattr(tweet_result, 'views') else 0
+                                }
+                            })
             
             logger.info(f"Successfully fetched tweets for user {screen_name}", extra={
                 'context': {
