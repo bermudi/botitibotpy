@@ -189,49 +189,21 @@ class TwitterClient:
             
             # Extract relevant data from thread response
             comments = []
-            if hasattr(response, 'data'):
-                # Convert instructions to entries
-                entries = response.data.threaded_conversation_with_injections_v2.instructions
-                logger.debug(f"Found {len(entries)} instruction sets")
-                
-                for instruction in entries:
-                    if hasattr(instruction, 'entries'):
-                        for entry in instruction.entries:
-                            if hasattr(entry, 'content'):
-                                # Handle timeline entries
-                                if hasattr(entry.content, 'items'):
-                                    # Multiple items in content
-                                    for item in entry.content.items:
-                                        if (hasattr(item, 'item') and 
-                                            hasattr(item.item, 'itemContent') and 
-                                            hasattr(item.item.itemContent, 'tweet_results')):
-                                            tweet = item.item.itemContent.tweet_results.result
-                                            if (hasattr(tweet, 'legacy') and 
-                                                hasattr(tweet.legacy, 'in_reply_to_status_id_str') and
-                                                tweet.legacy.in_reply_to_status_id_str == tweet_id):
-                                                user = tweet.core.user_results.result
-                                                logger.debug(f"Found reply from user: {user.legacy.screen_name}")
-                                                comments.append({
-                                                    'id': tweet.rest_id,
-                                                    'author': user.legacy.screen_name,
-                                                    'content': tweet.legacy.full_text if hasattr(tweet.legacy, 'full_text') else tweet.legacy.text,
-                                                    'created_at': tweet.legacy.created_at
-                                                })
-                                # Handle conversation entries
-                                elif (hasattr(entry.content, 'itemContent') and 
-                                      hasattr(entry.content.itemContent, 'tweet_results')):
-                                    tweet = entry.content.itemContent.tweet_results.result
-                                    if (hasattr(tweet, 'legacy') and 
-                                        hasattr(tweet.legacy, 'in_reply_to_status_id_str') and
-                                        tweet.legacy.in_reply_to_status_id_str == tweet_id):
-                                        user = tweet.core.user_results.result
-                                        logger.debug(f"Found reply from user: {user.legacy.screen_name}")
-                                        comments.append({
-                                            'id': tweet.rest_id,
-                                            'author': user.legacy.screen_name,
-                                            'content': tweet.legacy.full_text if hasattr(tweet.legacy, 'full_text') else tweet.legacy.text,
-                                            'created_at': tweet.legacy.created_at
-                                        })
+            if hasattr(response, 'data') and isinstance(response.data, list):
+                for tweet_data in response.data:
+                    if hasattr(tweet_data, 'tweet') and hasattr(tweet_data.tweet, 'legacy'):
+                        tweet = tweet_data.tweet
+                        # Check if this is a reply to our tweet
+                        if (hasattr(tweet.legacy, 'in_reply_to_status_id_str') and 
+                            tweet.legacy.in_reply_to_status_id_str == tweet_id):
+                            user = tweet_data.user
+                            logger.debug(f"Found reply from user: {user.legacy.screen_name}")
+                            comments.append({
+                                'id': tweet.rest_id,
+                                'author': user.legacy.screen_name,
+                                'content': tweet.legacy.full_text if hasattr(tweet.legacy, 'full_text') else tweet.legacy.text,
+                                'created_at': tweet.legacy.created_at
+                            })
             
             logger.info(f"Successfully fetched thread for tweet {tweet_id} with {len(comments)} replies", extra={
                 'context': {
