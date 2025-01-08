@@ -638,7 +638,26 @@ class BlueskyClient:
                 }
             })
             
-            response = self.client.send_post(text=text, reply_to=uri)
+            # Get the post to reply to
+            thread = self.get_post_thread(uri)
+            if not thread or not thread.thread or not thread.thread.post:
+                logger.error("Failed to get post to reply to")
+                return None
+                
+            # Create the reply reference
+            reply_ref = {
+                'root': {
+                    'uri': uri,
+                    'cid': thread.thread.post.cid
+                },
+                'parent': {
+                    'uri': uri,
+                    'cid': thread.thread.post.cid
+                }
+            }
+            
+            # Send the reply
+            response = self.client.send_post(text=text, reply_to=reply_ref)
             
             logger.info("Successfully replied to post", extra={
                 'context': {

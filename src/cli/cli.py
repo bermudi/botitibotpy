@@ -378,6 +378,7 @@ async def author_feed(platform: str, username: str) -> None:
         for post in posts.feed:
             click.echo(f"Content: {post.post.record.text}")
             click.echo(f"Posted at: {post.post.record.created_at}")
+            click.echo(f"URI: {post.post.uri}")
             click.echo("")
     except Exception as e:
         logger.error(f"Error fetching author feed: {e}")
@@ -397,7 +398,7 @@ async def comment(platform: str, post_id: str, comment_text: str) -> None:
             result = await client.reply_to_tweet(post_id, comment_text)
         else:
             with BlueskyClient() as client:
-                result = await client.reply_to_post(post_id, comment_text)
+                result = client.reply_to_post(post_id, comment_text)
         
         if result:
             click.echo("Comment posted successfully")
@@ -421,14 +422,28 @@ async def view_comments(platform: str, post_id: str) -> None:
             comments = await client.get_tweet_thread(post_id)
         else:
             with BlueskyClient() as client:
-                comments = await client.get_post_thread(post_id)
-        
-        click.echo("\nComments:")
-        for comment in comments:
-            click.echo(f"Author: {comment.author}")
-            click.echo(f"Content: {comment.content}")
-            click.echo(f"Posted at: {comment.created_at}")
-            click.echo("")
+                thread = client.get_post_thread(post_id)
+                if not thread:
+                    click.echo("Failed to fetch thread")
+                    return
+                
+                # Display the original post
+                click.echo("\nOriginal Post:")
+                click.echo(f"Author: {thread.thread.post.author.display_name} (@{thread.thread.post.author.handle})")
+                click.echo(f"Content: {thread.thread.post.record.text}")
+                click.echo(f"Posted at: {thread.thread.post.record.created_at}")
+                click.echo("")
+                
+                # Display replies
+                if hasattr(thread.thread, 'replies') and thread.thread.replies:
+                    click.echo("Replies:")
+                    for reply in thread.thread.replies:
+                        click.echo(f"Author: {reply.post.author.display_name} (@{reply.post.author.handle})")
+                        click.echo(f"Content: {reply.post.record.text}")
+                        click.echo(f"Posted at: {reply.post.record.created_at}")
+                        click.echo("")
+                else:
+                    click.echo("No replies yet")
     except Exception as e:
         logger.error(f"Error fetching comments: {e}")
         click.echo(f"Error: {str(e)}", err=True)
