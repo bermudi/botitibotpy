@@ -56,15 +56,15 @@ class TwitterClient:
         self.client = TwitterOpenapiPython()
         # Set required headers for API compatibility
         self.client.additional_api_headers = {
-            "sec-ch-ua-platform": '"Windows"',
-            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+            "sec-ch-ua-platform": '"Linux"',
+            "User-Agent": "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
             "Accept": "*/*",
             "Accept-Language": "en-US,en;q=0.9",
             "Accept-Encoding": "gzip, deflate, br"
         }
         self.client.additional_browser_headers = {
-            "sec-ch-ua-platform": '"Windows"',
-            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+            "sec-ch-ua-platform": '"Linux"',
+            "User-Agent": "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
             "Accept": "*/*",
             "Accept-Language": "en-US,en;q=0.9",
             "Accept-Encoding": "gzip, deflate, br"
@@ -86,7 +86,10 @@ class TwitterClient:
             # First get the guest token
             guest_client = self.client.get_guest_client()
             # Then get the authenticated client
-            self._api = self.client.get_twitter_openapi_python_client(guest_client)
+            if self.client.additional_cookies:
+                self._api = self.client.get_client_from_cookies(self.client.additional_cookies)
+            else:
+                self._api = guest_client
         return self._api
     
     def setup_auth(self) -> bool:
