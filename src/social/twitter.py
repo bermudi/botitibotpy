@@ -182,13 +182,16 @@ class TwitterClient:
             )
             # Extract relevant data from thread response
             comments = []
-            for item in thread.data:
-                if item.tweet.in_reply_to_status_id == tweet_id:
-                    comments.append({
-                        'author': item.user.username,
-                        'content': item.tweet.text,
-                        'created_at': item.tweet.created_at
-                    })
+            for tweet_data in thread.data:
+                if hasattr(tweet_data, 'tweet') and hasattr(tweet_data, 'user'):
+                    tweet = tweet_data.tweet
+                    user = tweet_data.user
+                    if hasattr(tweet.legacy, 'in_reply_to_status_id_str') and tweet.legacy.in_reply_to_status_id_str == tweet_id:
+                        comments.append({
+                            'author': user.legacy.screen_name,
+                            'content': tweet.legacy.full_text if hasattr(tweet.legacy, 'full_text') else tweet.legacy.text,
+                            'created_at': tweet.legacy.created_at
+                        })
             logger.info(f"Successfully fetched thread for tweet {tweet_id}", extra={
                 'context': {
                     'tweet_id': tweet_id,
@@ -271,20 +274,21 @@ class TwitterClient:
             
             # Extract relevant data from tweets response
             tweets = []
-            for item in tweets_response.data:
-                tweet_data = item.tweet
-                user_data = item.user
-                tweets.append({
-                    'content': tweet_data.text,
-                    'created_at': tweet_data.created_at,
-                    'author': user_data.username,
-                    'engagement_metrics': {
-                        'likes': tweet_data.favorite_count,
-                        'retweets': tweet_data.retweet_count,
-                        'replies': tweet_data.reply_count,
-                        'views': tweet_data.view_count if hasattr(tweet_data, 'view_count') else 0
-                    }
-                })
+            for tweet_data in tweets_response.data:
+                if hasattr(tweet_data, 'tweet') and hasattr(tweet_data, 'user'):
+                    tweet = tweet_data.tweet
+                    user = tweet_data.user
+                    tweets.append({
+                        'content': tweet.legacy.full_text if hasattr(tweet.legacy, 'full_text') else tweet.legacy.text,
+                        'created_at': tweet.legacy.created_at,
+                        'author': user.legacy.screen_name,
+                        'engagement_metrics': {
+                            'likes': tweet.legacy.favorite_count,
+                            'retweets': tweet.legacy.retweet_count,
+                            'replies': tweet.legacy.reply_count,
+                            'views': tweet.views.count if hasattr(tweet, 'views') else 0
+                        }
+                    })
             
             logger.info(f"Successfully fetched tweets for user {screen_name}", extra={
                 'context': {
