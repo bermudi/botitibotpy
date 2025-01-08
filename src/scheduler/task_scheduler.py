@@ -340,151 +340,130 @@ class TaskScheduler:
             await asyncio.sleep(self.intervals['reply_check'] * 60)
 
     async def _schedule_metrics_collection(self):
-        """Schedule periodic collection of engagement metrics"""
-        logger.info("Starting metrics collection scheduler", extra={
-            'context': {
-                'interval_minutes': self.intervals['metrics_update'],
-                'component': 'task_scheduler.schedule_metrics_collection'
-            }
-        })
-        
+        """Schedule metrics collection for posts."""
         while True:
             try:
-                # Check if we're rate limited for read operations
-                if self.queue_manager.is_rate_limited("read"):
-                    delay = self.queue_manager.get_rate_limit_delay("read")
-                    logger.warning("Read operations rate limited, skipping metrics collection", extra={
-                        'context': {
-                            'delay': delay,
-                            'component': 'task_scheduler.schedule_metrics_collection'
-                        }
-                    })
-                    await asyncio.sleep(min(delay, self.intervals['metrics_update'] * 60))
-                    continue
+                # Get recent posts without await since it's synchronous
+                posts = self.db_ops.get_recent_posts(hours=24)
                 
-                # Get recent posts from the last 24 hours
-                posts = await self.db_ops.get_recent_posts(hours=24)
-                logger.info("Retrieved recent posts", extra={
-                    'context': {
-                        'post_count': len(posts),
-                        'component': 'task_scheduler.schedule_metrics_collection'
-                    }
-                })
-                
-                # Collect metrics for each post
                 for post in posts:
-                    await self._collect_post_metrics(post)
+                    # Get engagement metrics from the platform
+                    if post.credentials.platform == Platform.TWITTER:
+                        metrics = await self.twitter_client.get_tweet_metrics(post.platform_post_id)
+                    elif post.credentials.platform == Platform.BLUESKY:
+                        metrics = await self.bluesky_client.get_post_metrics(post.platform_post_id)
                     
-                # If successful, gradually reduce the interval back to normal
-                if self.intervals['metrics_update'] > self.config.metrics_update_interval:
-                    self.intervals['metrics_update'] = max(
-                        self.config.metrics_update_interval,
-                        self.intervals['metrics_update'] // 2
-                    )
-                    
+                    if metrics:
+                        # Update metrics without await since it's synchronous
+                        self.db_ops.update_post_metrics(post.id, metrics)
+                
+                logger.info(f"Updated metrics for {len(posts)} posts")
             except Exception as e:
-                logger.error("Error in metrics collection cycle", exc_info=True, extra={
-                    'context': {
-                        'error': str(e),
-                        'component': 'task_scheduler.schedule_metrics_collection'
-                    }
-                })
+                logger.error("Error in metrics collection cycle", exc_info=True)
             
             await asyncio.sleep(self.intervals['metrics_update'] * 60)
 
     async def _generate_and_post_content(self):
-        """Generate and post content to all platforms"""
-        logger.debug("Starting content generation cycle", extra={
-            'context': {
-                'component': 'task_scheduler.generate_and_post_content'
-            }
-        })
-        
-        content = await self.content_generator.generate_post()
-        if not content:
-            logger.warning("No content generated", extra={
-                'context': {
-                    'component': 'task_scheduler.generate_and_post_content'
-                }
-            })
-            return
+        """Generate and post new content."""
+        try:
+            # Generate content with a default prompt about tech and social media
+            prompt = "Create an engaging post about technology, AI, or social media that would interest tech enthusiasts"
+            content = self.content_generator.generate_post(prompt=prompt)
             
-        logger.info("Content generated successfully", extra={
-            'context': {
-                'content_length': len(content),
-                'component': 'task_scheduler.generate_and_post_content'
-            }
-        })
-        
-        # Post to each platform
-        post_ids = {}
-        for platform in [Platform.TWITTER, Platform.BLUESKY]:
-            try:
-                post_id = await self._post_to_platform(platform, content)
-                if post_id:
-                    post_ids[platform] = post_id
-            except Exception as e:
-                if not await self._handle_platform_error(platform.name.lower(), e):
-                    raise
-                    
-        return post_ids
+            if content:
+                # Post to each configured platform
+                if self.twitter_client and self.twitter_client.is_authenticated:
+                    tweet = await self.twitter_client.post_tweet(content)
+                    if tweet:
+                        # Store the post in database
+                        self.db_ops.create_post(
+                            credentials_id=1,  # Twitter credentials
+                            platform_post_id=tweet['id'],
+                            content=content
+                        )
+                
+                if self.bluesky_client and self.bluesky_client.is_authenticated:
+                    post = await self.bluesky_client.create_post(content)
+                    if post:
+                        # Store the post in database
+                        self.db_ops.create_post(
+                            credentials_id=2,  # Bluesky credentials
+                            platform_post_id=post['id'],
+                            content=content
+                        )
+                        
+                logger.info("Successfully generated and posted new content")
+            else:
+                logger.error("Failed to generate content")
+                
+        except Exception as e:
+            logger.error("Error in content generation cycle", exc_info=True)
 
     async def _check_and_handle_replies(self):
         """Check for new replies and generate responses"""
-        logger.debug("Starting reply check cycle", extra={
-            'context': {
-                'component': 'task_scheduler.check_and_handle_replies'
-            }
-        })
+        logger.debug("Starting reply check cycle")
         
-        # Get recent posts
-        recent_posts = await self._get_recent_posts()
-        logger.info("Retrieved recent posts", extra={
-            'context': {
-                'post_count': len(recent_posts),
-                'component': 'task_scheduler.check_and_handle_replies'
-            }
-        })
-        
-        for post in recent_posts:
-            try:
-                # Get replies for each platform
-                if post.platform == Platform.TWITTER:
-                    replies = await self.twitter_client.get_tweet_thread(post.platform_id)
-                else:
-                    replies = await self.bluesky_client.get_post_thread(post.platform_id)
-                    
-                logger.debug("Retrieved replies for post", extra={
-                    'context': {
-                        'post_id': post.id,
-                        'platform': post.platform.name,
-                        'reply_count': len(replies),
-                        'component': 'task_scheduler.check_and_handle_replies'
-                    }
-                })
-                
-                # Handle each reply
-                for reply in replies:
-                    # Generate response
-                    response = await self.content_generator.generate_reply(reply.text)
-                    if not response:
+        try:
+            # Get recent posts (synchronous operation)
+            recent_posts = self.db_ops.get_recent_posts(hours=24)
+            logger.info(f"Retrieved {len(recent_posts)} recent posts")
+            
+            for post in recent_posts:
+                try:
+                    # Get replies based on platform
+                    if post.credentials.platform == Platform.TWITTER:
+                        replies = await self.twitter_client.get_tweet_thread(post.platform_post_id)
+                    else:
+                        replies = await self.bluesky_client.get_post_thread(post.platform_post_id)
+                        
+                    if not replies:
                         continue
                         
-                    # Post response
-                    if post.platform == Platform.TWITTER:
-                        await self._reply_on_twitter(reply.id, response)
-                    else:
-                        await self._reply_on_bluesky(reply.id, response)
+                    logger.debug(f"Retrieved {len(replies)} replies for post {post.platform_post_id}")
+                    
+                    # Handle each reply
+                    for reply in replies:
+                        # Skip if we've already replied to this comment
+                        existing_comment = self.db_ops.get_comment(reply['id'])
+                        if existing_comment and existing_comment.is_replied_to:
+                            continue
+                            
+                        # Store the comment
+                        comment = self.db_ops.create_comment(
+                            post_id=post.id,
+                            platform_comment_id=reply['id'],
+                            author_username=reply['author'],
+                            content=reply['content']
+                        )
                         
-            except Exception as e:
-                logger.error("Error handling replies for post", exc_info=True, extra={
-                    'context': {
-                        'post_id': post.id,
-                        'platform': post.platform.name,
-                        'error': str(e),
-                        'component': 'task_scheduler.check_and_handle_replies'
-                    }
-                })
+                        # Generate response
+                        response = self.content_generator.generate_reply(
+                            original_post=post.content,
+                            comment_text=reply['content']
+                        )
+                        
+                        if response:
+                            # Post the response
+                            if post.credentials.platform == Platform.TWITTER:
+                                response_id = await self.twitter_client.reply_to_tweet(reply['id'], response)
+                            else:
+                                response_id = await self.bluesky_client.reply_to_post(reply['id'], response)
+                                
+                            if response_id:
+                                # Update comment with our reply
+                                self.db_ops.update_comment_reply(
+                                    comment.id,
+                                    response_id,
+                                    response
+                                )
+                                
+                except Exception as e:
+                    logger.error(f"Error handling replies for post {post.platform_post_id}: {str(e)}", exc_info=True)
+                    continue
+                    
+        except Exception as e:
+            logger.error("Error in reply checking cycle", exc_info=True)
+            raise
 
     async def _collect_all_metrics(self):
         """Collect metrics for all recent posts"""
@@ -594,34 +573,13 @@ class TaskScheduler:
             })
             raise
 
-    async def _get_recent_posts(self):
-        """Get posts from the last 24 hours"""
-        logger.debug("Retrieving recent posts", extra={
-            'context': {
-                'time_window': '24h',
-                'component': 'task_scheduler.get_recent_posts'
-            }
-        })
-        
+    async def _get_recent_posts(self) -> List[Post]:
+        """Get posts from the last 24 hours."""
         try:
-            posts = await self.db_ops.get_posts_since(
-                datetime.now() - timedelta(hours=24)
-            )
-            
-            logger.info("Retrieved recent posts", extra={
-                'context': {
-                    'post_count': len(posts),
-                    'component': 'task_scheduler.get_recent_posts'
-                }
-            })
-            
+            # Use get_recent_posts instead of get_posts_since
+            posts = self.db_ops.get_recent_posts(hours=24)
+            logger.info(f"Retrieved {len(posts)} recent posts")
             return posts
-            
         except Exception as e:
-            logger.error("Failed to retrieve recent posts", exc_info=True, extra={
-                'context': {
-                    'error': str(e),
-                    'component': 'task_scheduler.get_recent_posts'
-                }
-            })
+            logger.error("Failed to retrieve recent posts", exc_info=True)
             raise
