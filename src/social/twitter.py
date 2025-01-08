@@ -132,7 +132,10 @@ class TwitterClient:
     def get_timeline(self, limit: int = 20) -> Optional[Any]:
         """Fetch user's timeline"""
         try:
-            timeline = self.api.get_home_timeline(count=limit)
+            # Get the tweet API utility
+            tweet_api = self.api.get_tweet_api()
+            # Get the timeline using the tweet API
+            timeline = tweet_api.get_home_latest_timeline(count=limit)
             logger.info(f"Successfully fetched {limit} timeline items", extra={
                 'context': {
                     'limit': limit,
