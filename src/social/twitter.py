@@ -176,12 +176,27 @@ class TwitterClient:
     async def get_tweet_thread(self, tweet_id: str) -> Optional[Any]:
         """Fetch a tweet and its replies"""
         try:
-            # Get tweet details with replies
-            response = self.api.get_tweet_api().get_tweet_detail(
-                focal_tweet_id=tweet_id,
+            # First get the tweet to get the author's ID
+            tweet_response = self.api.get_tweet_api().get_tweet_detail(
+                focal_tweet_id=tweet_id
+            )
+            
+            logger.debug(f"Raw tweet response: {tweet_response.raw}")
+            
+            if not hasattr(tweet_response, 'data') or not hasattr(tweet_response.data, 'tweet_results'):
+                logger.error("Invalid tweet response structure")
+                return []
+                
+            # Get the author's ID
+            author_id = tweet_response.data.tweet_results.result.core.user_results.result.rest_id
+            logger.debug(f"Found tweet author ID: {author_id}")
+            
+            # Get all tweets and replies from the author
+            response = self.api.get_tweet_api().get_user_tweets_and_replies(
+                user_id=author_id,
+                count=100,  # Get a good number of recent tweets
                 extra_param={
-                    "includeReplies": True,
-                    "withCommunity": True
+                    "includeReplies": True
                 }
             )
             
