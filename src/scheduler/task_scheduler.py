@@ -410,52 +410,19 @@ class TaskScheduler:
             
             for post in recent_posts:
                 try:
-                    # Get replies based on platform
-                    if post.credentials.platform == Platform.TWITTER:
+                    # Handle Twitter replies
+                    if post.credentials.platform == Platform.TWITTER and self.twitter_client and self.twitter_client.is_authenticated:
                         replies = await self.twitter_client.get_tweet_thread(post.platform_post_id)
-                    else:
-                        replies = await self.bluesky_client.get_post_thread(post.platform_post_id)
-                        
-                    if not replies:
-                        continue
-                        
-                    logger.debug(f"Retrieved {len(replies)} replies for post {post.platform_post_id}")
-                    
-                    # Handle each reply
-                    for reply in replies:
-                        # Skip if we've already replied to this comment
-                        existing_comment = self.db_ops.get_comment(reply['id'])
-                        if existing_comment and existing_comment.is_replied_to:
-                            continue
+                        if replies:
+                            logger.debug(f"Retrieved {len(replies)} replies for tweet {post.platform_post_id}")
+                            await self._handle_replies(post, replies, Platform.TWITTER)
                             
-                        # Store the comment
-                        comment = self.db_ops.create_comment(
-                            post_id=post.id,
-                            platform_comment_id=reply['id'],
-                            author_username=reply['author'],
-                            content=reply['content']
-                        )
-                        
-                        # Generate response
-                        response = self.content_generator.generate_reply(
-                            original_post=post.content,
-                            comment_text=reply['content']
-                        )
-                        
-                        if response:
-                            # Post the response
-                            if post.credentials.platform == Platform.TWITTER:
-                                response_id = await self.twitter_client.reply_to_tweet(reply['id'], response)
-                            else:
-                                response_id = await self.bluesky_client.reply_to_post(reply['id'], response)
-                                
-                            if response_id:
-                                # Update comment with our reply
-                                self.db_ops.update_comment_reply(
-                                    comment.id,
-                                    response_id,
-                                    response
-                                )
+                    # Handle Bluesky replies (only if Bluesky is configured)
+                    elif post.credentials.platform == Platform.BLUESKY and self.bluesky_client:
+                        replies = await self.bluesky_client.get_post_thread(post.platform_post_id)
+                        if replies:
+                            logger.debug(f"Retrieved {len(replies)} replies for Bluesky post {post.platform_post_id}")
+                            await self._handle_replies(post, replies, Platform.BLUESKY)
                                 
                 except Exception as e:
                     logger.error(f"Error handling replies for post {post.platform_post_id}: {str(e)}", exc_info=True)
@@ -464,6 +431,43 @@ class TaskScheduler:
         except Exception as e:
             logger.error("Error in reply checking cycle", exc_info=True)
             raise
+
+    async def _handle_replies(self, post, replies, platform: Platform):
+        """Handle replies for a specific post"""
+        for reply in replies:
+            # Skip if we've already replied to this comment
+            existing_comment = self.db_ops.get_comment(reply['id'])
+            if existing_comment and existing_comment.is_replied_to:
+                continue
+                
+            # Store the comment
+            comment = self.db_ops.create_comment(
+                post_id=post.id,
+                platform_comment_id=reply['id'],
+                author_username=reply['author'],
+                content=reply['content']
+            )
+            
+            # Generate response
+            response = self.content_generator.generate_reply(
+                original_post=post.content,
+                comment_text=reply['content']
+            )
+            
+            if response:
+                # Post the response based on platform
+                if platform == Platform.TWITTER:
+                    response_id = await self.twitter_client.reply_to_tweet(reply['id'], response)
+                else:
+                    response_id = await self.bluesky_client.reply_to_post(reply['id'], response)
+                    
+                if response_id:
+                    # Update comment with our reply
+                    self.db_ops.update_comment_reply(
+                        comment.id,
+                        response_id,
+                        response
+                    )
 
     async def _collect_all_metrics(self):
         """Collect metrics for all recent posts"""
