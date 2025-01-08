@@ -135,24 +135,24 @@ class TwitterClient:
         try:
             timeline = self.api.get_tweet_api().get_home_timeline(count=limit)
             logger.debug(f"Timeline response type: {type(timeline)}")
-            logger.debug(f"Timeline response: {timeline}")
+            logger.debug(f"Timeline raw type: {type(timeline.raw)}")
+            logger.debug(f"Timeline raw dir: {dir(timeline.raw)}")
             
             # Extract relevant data from timeline response
             tweets = []
-            for entry in timeline.raw.entry:
-                if hasattr(entry, 'content') and hasattr(entry.content, 'itemContent'):
-                    tweet_result = entry.content.itemContent.tweet_results.result
-                    user_result = tweet_result.core.user_results.result
-                    
+            for tweet_data in timeline.data:
+                if hasattr(tweet_data, 'tweet') and hasattr(tweet_data, 'user'):
+                    tweet = tweet_data.tweet
+                    user = tweet_data.user
                     tweets.append({
-                        'content': tweet_result.legacy.full_text,
-                        'created_at': tweet_result.legacy.created_at,
-                        'author': user_result.legacy.screen_name,
+                        'content': tweet.legacy.full_text if hasattr(tweet.legacy, 'full_text') else tweet.legacy.text,
+                        'created_at': tweet.legacy.created_at,
+                        'author': user.legacy.screen_name,
                         'engagement_metrics': {
-                            'likes': tweet_result.legacy.favorite_count,
-                            'retweets': tweet_result.legacy.retweet_count,
-                            'replies': tweet_result.legacy.reply_count,
-                            'views': tweet_result.views.count if hasattr(tweet_result, 'views') else 0
+                            'likes': tweet.legacy.favorite_count,
+                            'retweets': tweet.legacy.retweet_count,
+                            'replies': tweet.legacy.reply_count,
+                            'views': tweet.views.count if hasattr(tweet, 'views') else 0
                         }
                     })
             
