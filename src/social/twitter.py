@@ -264,7 +264,15 @@ class TwitterClient:
             
             # Get user info to get the user ID
             user_info = self.api.get_user_api().get_user_by_screen_name(screen_name=screen_name)
-            user_id = user_info.data.rest_id
+            logger.debug(f"User info response type: {type(user_info)}")
+            logger.debug(f"User info data type: {type(user_info.data)}")
+            logger.debug(f"User info data dir: {dir(user_info.data)}")
+            logger.debug(f"User info data: {user_info.data}")
+            logger.debug(f"User info data user type: {type(user_info.data.user)}")
+            logger.debug(f"User info data user dir: {dir(user_info.data.user)}")
+            
+            # The user ID is in the data object
+            user_id = user_info.data.user.rest_id
             
             # Get user tweets with correct parameters
             tweets_response = self.api.get_tweet_api().get_user_tweets(
