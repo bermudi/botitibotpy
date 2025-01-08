@@ -83,7 +83,10 @@ class TwitterClient:
     def api(self):
         """Get the Twitter API client"""
         if not self._api:
-            self._api = self.client.get_twitter_openapi_python_client()
+            # First get the guest token
+            guest_client = self.client.get_guest_client()
+            # Then get the authenticated client
+            self._api = self.client.get_twitter_openapi_python_client(guest_client)
         return self._api
     
     def setup_auth(self) -> bool:
@@ -98,7 +101,8 @@ class TwitterClient:
                     self.client.additional_cookies = cookies
                     self._auth_status = True
                     # Initialize API client with cookies
-                    self._api = self.client.get_client_from_cookies(cookies)
+                    guest_client = self.client.get_guest_client()
+                    self._api = self.client.get_twitter_openapi_python_client(guest_client)
                     return True
                 else:
                     logger.warning("Invalid cookies found, creating new ones")
@@ -112,7 +116,8 @@ class TwitterClient:
                 self.client.additional_cookies = cookies
                 self._auth_status = True
                 # Initialize API client with cookies
-                self._api = self.client.get_client_from_cookies(cookies)
+                guest_client = self.client.get_guest_client()
+                self._api = self.client.get_twitter_openapi_python_client(guest_client)
                 return True
             else:
                 logger.error("Failed to create valid cookies")
@@ -234,6 +239,140 @@ class TwitterClient:
                 'context': {
                     'error': str(e),
                     'component': 'twitter.feed'
+                }
+            })
+            raise
+
+    def _load_existing_cookies(self, cookie_path: Path) -> Dict:
+        """Load existing cookies from file"""
+        logger.debug("Loading existing cookies", extra={
+            'context': {
+                'cookie_path': str(cookie_path),
+                'component': 'twitter.auth'
+            }
+        })
+        with open(cookie_path, "r") as f:
+            cookies_dict = json.load(f)
+            return {k["name"]: k["value"] for k in cookies_dict} if isinstance(cookies_dict, list) else cookies_dict
+            
+    @retry_on_failure(max_retries=3, delay=2)
+    def _create_new_cookies(self, cookie_path: Path) -> Dict:
+        """Create and save new cookies with retry mechanism"""
+        logger.debug("Creating new cookies", extra={
+            'context': {
+                'cookie_path': str(cookie_path),
+                'component': 'twitter.auth'
+            }
+        })
+        if not Config.TWITTER_USERNAME or not Config.TWITTER_PASSWORD:
+            raise ValueError("Twitter credentials not found in config")
+            
+        try:
+            auth_handler = CookieSessionUserHandler(
+                screen_name=Config.TWITTER_USERNAME,
+                password=Config.TWITTER_PASSWORD
+            )
+            logger.debug("Created auth handler, attempting to get cookies", extra={
+                'context': {
+                    'username': Config.TWITTER_USERNAME,
+                    'component': 'twitter.auth'
+                }
+            })
+            cookies_dict = auth_handler.get_cookies().get_dict()
+            
+            if not cookies_dict:
+                raise ValueError("Failed to obtain cookies from auth handler")
+                
+            logger.debug("Successfully obtained cookies", extra={
+                'context': {
+                    'cookie_path': str(cookie_path),
+                    'component': 'twitter.auth'
+                }
+            })
+            
+            with open(cookie_path, "w") as f:
+                json.dump(cookies_dict, f, ensure_ascii=False, indent=4)
+            logger.info("Successfully saved new cookies to file", extra={
+                'context': {
+                    'cookie_path': str(cookie_path),
+                    'component': 'twitter.auth'
+                }
+            })
+            return cookies_dict
+            
+        except Exception as e:
+            logger.error(f"Failed to create new cookies: {e}", exc_info=True, extra={
+                'context': {
+                    'error': str(e),
+                    'component': 'twitter.auth'
+                }
+            })
+            raise
+        
+    def _validate_cookies(self, cookies_dict: Dict) -> bool:
+        """Validate cookie structure and contents"""
+        try:
+            required_keys = ['auth_token', 'ct0']
+            missing = [key for key in required_keys if key not in cookies_dict]
+            
+            if missing:
+                logger.error(f"Invalid cookie structure. Missing keys: {', '.join(missing)}")
+                return False
+                
+            # Check if cookies are not empty
+            for key in required_keys:
+                if not cookies_dict[key]:
+                    logger.error(f"Empty value for required cookie: {key}")
+                    return False
+                    
+            return True
+        except Exception as e:
+            logger.error(f"Error validating cookies: {str(e)}")
+            return False
+    
+    @retry_on_failure()
+    def post_content(self, content: str, use_rag: bool = False, **kwargs) -> bool:
+        """Post content to Twitter with optional RAG support"""
+        try:
+            # Generate content if kwargs are provided
+            if kwargs:
+                from ..content.generator import ContentGenerator
+                generator = ContentGenerator()
+                
+                if use_rag:
+                    # Load content sources and index for RAG
+                    if not generator.load_content_source("content_sources"):
+                        logger.error("Failed to load content sources")
+                        return False
+                        
+                    # Load the index
+                    if not generator.load_index():
+                        logger.error("Failed to load index")
+                        return False
+                    
+                    # Generate content with RAG
+                    content = generator.generate_post_withRAG(content, **kwargs)
+                else:
+                    # Generate content without RAG
+                    content = generator.generate_post(content, **kwargs)
+                
+                if not content:
+                    logger.error("Failed to generate content")
+                    return False
+
+            self.api.create_tweet(text=content)
+            logger.info("Successfully posted content to Twitter", extra={
+                'context': {
+                    'content': content,
+                    'component': 'twitter.post'
+                }
+            })
+            return True
+        except Exception as e:
+            logger.error(f"Error posting to Twitter: {e}", exc_info=True, extra={
+                'context': {
+                    'error': str(e),
+                    'component': 'twitter.post'
                 }
             })
             raise
