@@ -133,7 +133,7 @@ class TwitterClient:
     def get_timeline(self, limit: int = 20) -> Optional[Any]:
         """Fetch user's timeline"""
         try:
-            timeline = self.api.get_tweet_api().get_home_latest_timeline(count=limit)
+            timeline = self.api.get_tweet_api().get_home_timeline(count=limit)
             logger.info(f"Successfully fetched {limit} timeline items", extra={
                 'context': {
                     'limit': limit,
@@ -154,7 +154,10 @@ class TwitterClient:
     def get_tweet_thread(self, tweet_id: str) -> Optional[Any]:
         """Fetch a tweet and its replies"""
         try:
-            thread = self.api.get_tweet_api().get_tweet_detail(tweet_id)
+            thread = self.api.get_tweet_api().get_tweet_detail(
+                tweet_id=tweet_id,
+                with_replies=True
+            )
             logger.info(f"Successfully fetched thread for tweet {tweet_id}", extra={
                 'context': {
                     'tweet_id': tweet_id,
@@ -175,7 +178,7 @@ class TwitterClient:
     def like_tweet(self, tweet_id: str) -> bool:
         """Like a tweet"""
         try:
-            self.api.get_post_api().favorite_tweet(tweet_id)
+            self.api.get_post_api().create_favorite(tweet_id=tweet_id)
             logger.info(f"Successfully liked tweet {tweet_id}", extra={
                 'context': {
                     'tweet_id': tweet_id,
@@ -196,7 +199,10 @@ class TwitterClient:
     def reply_to_tweet(self, tweet_id: str, text: str) -> bool:
         """Reply to a tweet"""
         try:
-            self.api.get_post_api().post_create_tweet(tweet_text=text, in_reply_to_tweet_id=tweet_id)
+            self.api.get_post_api().create_tweet(
+                text=text,
+                reply={"in_reply_to_tweet_id": tweet_id}
+            )
             logger.info(f"Successfully replied to tweet {tweet_id}", extra={
                 'context': {
                     'tweet_id': tweet_id,
@@ -223,11 +229,15 @@ class TwitterClient:
                 screen_name = Config.TWITTER_USERNAME
             
             # Get user info to get the user ID
-            user_info = self.api.get_user_api().get_user_by_screen_name(screen_name)
-            user_id = user_info.data.user.rest_id
+            user_info = self.api.get_user_api().get_user_by_screen_name(screen_name=screen_name)
+            user_id = user_info.data.rest_id
             
-            # Get user tweets
-            tweets = self.api.get_tweet_api().get_user_tweets(user_id)
+            # Get user tweets with correct parameters
+            tweets = self.api.get_tweet_api().get_user_tweets(
+                user_id=user_id,
+                with_replies=False,
+                with_retweets=True
+            )
             logger.info(f"Successfully fetched tweets for user {screen_name}", extra={
                 'context': {
                     'screen_name': screen_name,
@@ -361,8 +371,8 @@ class TwitterClient:
                     logger.error("Failed to generate content")
                     return False
 
-            # Get post API utility and create the tweet
-            self.api.get_post_api().post_create_tweet(tweet_text=content)
+            # Create tweet with correct method and parameters
+            self.api.get_post_api().create_tweet(text=content)
             logger.info("Successfully posted content to Twitter", extra={
                 'context': {
                     'content': content,
