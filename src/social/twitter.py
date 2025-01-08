@@ -156,7 +156,9 @@ class TwitterClient:
     def get_tweet_thread(self, tweet_id: str) -> Optional[Any]:
         """Fetch a tweet and its replies"""
         try:
-            thread = self.api.get_tweet_detail(tweet_id)
+            # Get tweet API utility
+            tweet_api = self.api.get_tweet_api()
+            thread = tweet_api.get_tweet_detail(tweet_id)
             logger.info(f"Successfully fetched thread for tweet {tweet_id}", extra={
                 'context': {
                     'tweet_id': tweet_id,
@@ -177,7 +179,9 @@ class TwitterClient:
     def like_tweet(self, tweet_id: str) -> bool:
         """Like a tweet"""
         try:
-            self.api.like_tweet(tweet_id)
+            # Get post API utility
+            post_api = self.api.get_post_api()
+            post_api.favorite_tweet(tweet_id)
             logger.info(f"Successfully liked tweet {tweet_id}", extra={
                 'context': {
                     'tweet_id': tweet_id,
@@ -224,12 +228,16 @@ class TwitterClient:
             if screen_name is None:
                 screen_name = Config.TWITTER_USERNAME
             
+            # Get user API utility
+            user_api = self.api.get_user_api()
             # Get user info to get the user ID
-            user_info = self.api.get_user_by_screen_name(screen_name)
+            user_info = user_api.get_user_by_screen_name(screen_name)
             user_id = user_info.data.user.rest_id
             
+            # Get tweet API utility
+            tweet_api = self.api.get_tweet_api()
             # Get user tweets
-            tweets = self.api.get_user_tweets(user_id)
+            tweets = tweet_api.get_user_tweets(user_id)
             logger.info(f"Successfully fetched tweets for user {screen_name}", extra={
                 'context': {
                     'screen_name': screen_name,
