@@ -275,27 +275,26 @@ class TwitterClient:
             logger.debug(f"Tweets response type: {type(tweets_response)}")
             logger.debug(f"Tweets response raw type: {type(tweets_response.raw)}")
             logger.debug(f"Tweets response raw dir: {dir(tweets_response.raw)}")
+            logger.debug(f"Tweets response raw: {tweets_response.raw}")
             
             # Extract relevant data from tweets response
             tweets = []
-            for instruction in tweets_response.raw.instructions:
-                if hasattr(instruction, 'entries'):
-                    for entry in instruction.entries:
-                        if hasattr(entry.content, 'itemContent'):
-                            tweet_result = entry.content.itemContent.tweet_results.result
-                            user_result = tweet_result.core.user_results.result
-                            
-                            tweets.append({
-                                'content': tweet_result.legacy.full_text,
-                                'created_at': tweet_result.legacy.created_at,
-                                'author': user_result.legacy.screen_name,
-                                'engagement_metrics': {
-                                    'likes': tweet_result.legacy.favorite_count,
-                                    'retweets': tweet_result.legacy.retweet_count,
-                                    'replies': tweet_result.legacy.reply_count,
-                                    'views': tweet_result.views.count if hasattr(tweet_result, 'views') else 0
-                                }
-                            })
+            for entry in tweets_response.raw.data.user.result.timeline_v2.timeline.instructions[0].entries:
+                if hasattr(entry.content, 'itemContent') and hasattr(entry.content.itemContent, 'tweet_results'):
+                    tweet_result = entry.content.itemContent.tweet_results.result
+                    user_result = tweet_result.core.user_results.result
+                    
+                    tweets.append({
+                        'content': tweet_result.legacy.full_text if hasattr(tweet_result.legacy, 'full_text') else tweet_result.legacy.text,
+                        'created_at': tweet_result.legacy.created_at,
+                        'author': user_result.legacy.screen_name,
+                        'engagement_metrics': {
+                            'likes': tweet_result.legacy.favorite_count,
+                            'retweets': tweet_result.legacy.retweet_count,
+                            'replies': tweet_result.legacy.reply_count,
+                            'views': tweet_result.views.count if hasattr(tweet_result, 'views') else 0
+                        }
+                    })
             
             logger.info(f"Successfully fetched tweets for user {screen_name}", extra={
                 'context': {
