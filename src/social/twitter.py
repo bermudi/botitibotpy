@@ -453,3 +453,37 @@ class TwitterClient:
                 }
             })
             raise
+
+    @retry_on_failure()
+    async def post_tweet(self, content: str) -> Optional[Dict[str, Any]]:
+        """Post a new tweet"""
+        try:
+            tweet = self.api.get_post_api().post_create_tweet(tweet_text=content)
+            if tweet and hasattr(tweet, 'data') and hasattr(tweet.data, 'tweet_results'):
+                tweet_data = tweet.data.tweet_results.result
+                return {
+                    'id': tweet_data.rest_id,
+                    'text': tweet_data.legacy.full_text
+                }
+            return None
+        except Exception as e:
+            logger.error(f"Error posting tweet: {e}", exc_info=True)
+            raise
+
+    @retry_on_failure()
+    async def get_tweet_metrics(self, tweet_id: str) -> Optional[Dict[str, int]]:
+        """Get engagement metrics for a tweet"""
+        try:
+            tweet = self.api.get_tweet_api().get_tweet_detail(focal_tweet_id=tweet_id)
+            if tweet and hasattr(tweet, 'data'):
+                tweet_data = tweet.data.threaded_conversation_with_injections_v2.instructions[0].entries[0].content.items[0].item.itemContent.tweet_results.result
+                return {
+                    'likes': tweet_data.legacy.favorite_count,
+                    'replies': tweet_data.legacy.reply_count,
+                    'reposts': tweet_data.legacy.retweet_count,
+                    'views': tweet_data.views.count if hasattr(tweet_data, 'views') else 0
+                }
+            return None
+        except Exception as e:
+            logger.error(f"Error getting tweet metrics: {e}", exc_info=True)
+            return None
