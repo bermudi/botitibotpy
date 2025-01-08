@@ -136,15 +136,18 @@ class TwitterClient:
             timeline = self.api.get_tweet_api().get_home_timeline(count=limit)
             # Extract relevant data from timeline response
             tweets = []
-            for tweet in timeline.data:
+            for item in timeline.data:
+                tweet_data = item.tweet
+                user_data = item.user
                 tweets.append({
-                    'content': tweet.text,
-                    'created_at': tweet.created_at,
+                    'content': tweet_data.text,
+                    'created_at': tweet_data.created_at,
+                    'author': user_data.username,
                     'engagement_metrics': {
-                        'likes': tweet.favorite_count,
-                        'retweets': tweet.retweet_count,
-                        'replies': tweet.reply_count,
-                        'views': tweet.view_count
+                        'likes': tweet_data.favorite_count,
+                        'retweets': tweet_data.retweet_count,
+                        'replies': tweet_data.reply_count,
+                        'views': tweet_data.view_count if hasattr(tweet_data, 'view_count') else 0
                     }
                 })
             logger.info(f"Successfully fetched {len(tweets)} timeline items", extra={
@@ -168,17 +171,17 @@ class TwitterClient:
         """Fetch a tweet and its replies"""
         try:
             thread = self.api.get_tweet_api().get_tweet_detail(
-                tweet_id=tweet_id,
-                with_replies=True
+                focal_tweet_id=tweet_id,
+                controller_data={"includeReplies": True}
             )
             # Extract relevant data from thread response
             comments = []
-            for tweet in thread.data:
-                if tweet.referenced_tweets and tweet.referenced_tweets[0].type == 'replied_to':
+            for item in thread.data:
+                if item.tweet.in_reply_to_status_id == tweet_id:
                     comments.append({
-                        'author': tweet.author.username,
-                        'content': tweet.text,
-                        'created_at': tweet.created_at
+                        'author': item.user.username,
+                        'content': item.tweet.text,
+                        'created_at': item.tweet.created_at
                     })
             logger.info(f"Successfully fetched thread for tweet {tweet_id}", extra={
                 'context': {
@@ -257,21 +260,23 @@ class TwitterClient:
             # Get user tweets with correct parameters
             tweets_response = self.api.get_tweet_api().get_user_tweets(
                 user_id=user_id,
-                with_replies=False,
-                with_retweets=True
+                extra_param={"includeReplies": False, "includeRetweets": True}
             )
             
             # Extract relevant data from tweets response
             tweets = []
-            for tweet in tweets_response.data:
+            for item in tweets_response.data:
+                tweet_data = item.tweet
+                user_data = item.user
                 tweets.append({
-                    'content': tweet.text,
-                    'created_at': tweet.created_at,
+                    'content': tweet_data.text,
+                    'created_at': tweet_data.created_at,
+                    'author': user_data.username,
                     'engagement_metrics': {
-                        'likes': tweet.favorite_count,
-                        'retweets': tweet.retweet_count,
-                        'replies': tweet.reply_count,
-                        'views': tweet.view_count
+                        'likes': tweet_data.favorite_count,
+                        'retweets': tweet_data.retweet_count,
+                        'replies': tweet_data.reply_count,
+                        'views': tweet_data.view_count if hasattr(tweet_data, 'view_count') else 0
                     }
                 })
             
