@@ -182,38 +182,45 @@ class TwitterClient:
             )
             
             logger.debug(f"Thread response type: {type(thread)}")
-            logger.debug(f"Thread response raw type: {type(thread.raw)}")
-            logger.debug(f"Thread response raw dir: {dir(thread.raw)}")
-            logger.debug(f"Thread response raw: {thread.raw}")
+            logger.debug(f"Thread raw: {thread.raw}")
             
             # Extract relevant data from thread response
             comments = []
-            for tweet_data in thread.data:
-                if hasattr(tweet_data, 'result'):
-                    tweet_result = tweet_data.result
-                    user_result = tweet_result.core.user_results.result
-                    
-                    if hasattr(tweet_result.legacy, 'in_reply_to_status_id_str') and tweet_result.legacy.in_reply_to_status_id_str == tweet_id:
-                        comments.append({
-                            'author': user_result.legacy.screen_name,
-                            'content': tweet_result.legacy.full_text if hasattr(tweet_result.legacy, 'full_text') else tweet_result.legacy.text,
-                            'created_at': tweet_result.legacy.created_at
-                        })
+            if hasattr(thread, 'data') and hasattr(thread.data, 'threaded_conversation_with_injections_v2'):
+                entries = thread.data.threaded_conversation_with_injections_v2.instructions[0].entries
+                
+                for entry in entries:
+                    if hasattr(entry, 'content') and hasattr(entry.content, 'items'):
+                        for item in entry.content.items:
+                            if hasattr(item, 'item') and hasattr(item.item, 'itemContent'):
+                                tweet_data = item.item.itemContent
+                                if hasattr(tweet_data, 'tweet_results'):
+                                    tweet_result = tweet_data.tweet_results.result
+                                    if hasattr(tweet_result, 'legacy') and hasattr(tweet_result, 'core'):
+                                        user_result = tweet_result.core.user_results.result
+                                        
+                                        # Check if this is a reply to our tweet
+                                        if (hasattr(tweet_result.legacy, 'in_reply_to_status_id_str') and 
+                                            tweet_result.legacy.in_reply_to_status_id_str == tweet_id):
+                                            
+                                            comments.append({
+                                                'id': tweet_result.rest_id,
+                                                'author': user_result.legacy.screen_name,
+                                                'content': tweet_result.legacy.full_text if hasattr(tweet_result.legacy, 'full_text') else tweet_result.legacy.text,
+                                                'created_at': tweet_result.legacy.created_at
+                                            })
             
-            logger.info(f"Successfully fetched thread for tweet {tweet_id}", extra={
+            logger.info(f"Successfully fetched thread for tweet {tweet_id} with {len(comments)} replies", extra={
                 'context': {
                     'tweet_id': tweet_id,
+                    'reply_count': len(comments),
                     'component': 'twitter.thread'
                 }
             })
             return comments
+            
         except Exception as e:
-            logger.error(f"Error fetching tweet thread: {e}", exc_info=True, extra={
-                'context': {
-                    'error': str(e),
-                    'component': 'twitter.thread'
-                }
-            })
+            logger.error(f"Error fetching tweet thread: {e}", exc_info=True)
             raise
             
     @retry_on_failure()
@@ -476,13 +483,16 @@ class TwitterClient:
         try:
             tweet = self.api.get_tweet_api().get_tweet_detail(focal_tweet_id=tweet_id)
             if tweet and hasattr(tweet, 'data'):
-                tweet_data = tweet.data.threaded_conversation_with_injections_v2.instructions[0].entries[0].content.items[0].item.itemContent.tweet_results.result
-                return {
-                    'likes': tweet_data.legacy.favorite_count,
-                    'replies': tweet_data.legacy.reply_count,
-                    'reposts': tweet_data.legacy.retweet_count,
-                    'views': tweet_data.views.count if hasattr(tweet_data, 'views') else 0
-                }
+                # Extract metrics from the tweet data
+                tweet_data = tweet.data
+                if hasattr(tweet_data, 'tweet_results'):
+                    result = tweet_data.tweet_results.result
+                    return {
+                        'likes': result.legacy.favorite_count,
+                        'replies': result.legacy.reply_count,
+                        'reposts': result.legacy.retweet_count,
+                        'views': result.views.count if hasattr(result, 'views') else 0
+                    }
             return None
         except Exception as e:
             logger.error(f"Error getting tweet metrics: {e}", exc_info=True)
