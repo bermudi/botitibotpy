@@ -2,6 +2,7 @@ import json
 import time
 import logging
 from atproto import Client, client_utils
+from atproto_client import Session
 from atproto_client.exceptions import RequestException, LoginRequiredError
 from typing import Optional, Any, Dict, Callable
 from ..config import Config
@@ -261,17 +262,17 @@ class BlueskyClient:
         elif hasattr(self.client, '_session') and hasattr(self.client._session, 'close'):
             self.client._session.close()
     
-    def _load_session(self) -> Optional[Dict]:
+    def _load_session(self) -> Optional[str]:
         try:
             if self.session_file.exists():
                 with open(self.session_file, 'r') as f:
-                    session = json.load(f)
+                    session_string = f.read()
                     logger.debug("Loaded existing session", extra={
                         'context': {
                             'component': 'bluesky.auth'
                         }
                     })
-                    return session
+                    return session_string
         except Exception as e:
             logger.error(f"Error loading session: {str(e)}", extra={
                 'context': {
@@ -281,11 +282,13 @@ class BlueskyClient:
             })
         return None
     
-    def _save_session(self, session: Dict) -> None:
+    def _save_session(self, session: Session) -> None:
         try:
+            session_string = session.export()
+            
             self.session_file.parent.mkdir(parents=True, exist_ok=True)
             with open(self.session_file, 'w') as f:
-                json.dump(session, f)
+                f.write(session_string)
             self.session_file.chmod(0o600)
             logger.debug("Saved session data", extra={
                 'context': {
@@ -323,13 +326,14 @@ class BlueskyClient:
         """Authenticate with Bluesky using credentials from config"""
         try:
             # Try to load existing session
-            session = self._load_session()
-            if session:
+            session_string = self._load_session()
+            if session_string:
                 try:
                     self.client = Client()
-                    self.client.session = session
+                    # Restore session from string
+                    self.client.login(session_string=session_string)
                     # Verify session is still valid
-                    self.profile = self.client.get_profile()
+                    self.profile = self.client.get_profile(actor=Config.BLUESKY_IDENTIFIER)
                     logger.info(f"Successfully restored session for: {self.profile.display_name}", extra={
                         'context': {
                             'display_name': self.profile.display_name,
@@ -367,7 +371,10 @@ class BlueskyClient:
                     )
                     
                     # Save new session
-                    self._save_session(self.client.session)
+                    self._save_session(self.client._session)
+                    
+                    # Get full profile
+                    self.profile = self.client.get_profile(actor=Config.BLUESKY_IDENTIFIER)
                     
                     logger.info(f"Successfully logged in as: {self.profile.display_name}", extra={
                         'context': {
@@ -531,8 +538,7 @@ class BlueskyClient:
                 }
             })
             
-            params = AuthorFeedParams(actor=actor, limit=limit)
-            feed = self.client.get_author_feed(params=params)
+            feed = self.client.get_author_feed(actor=actor, limit=limit)
             
             logger.info(f"Successfully fetched feed for {actor}", extra={
                 'context': {

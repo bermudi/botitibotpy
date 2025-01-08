@@ -291,10 +291,17 @@ async def post(platform: str, content: str, schedule: Optional[str] = None, use_
                 return
 
         # Post directly if no schedule is provided
-        if await client.post_content(content, use_rag=use_rag, **generation_kwargs):
-            click.echo(f"Posted to {platform} successfully")
+        if platform == 'bluesky':
+            with client as bluesky_client:
+                if bluesky_client.post_content(content, use_rag=use_rag, **generation_kwargs):
+                    click.echo(f"Posted to {platform} successfully")
+                else:
+                    click.echo(f"Failed to post to {platform}")
         else:
-            click.echo(f"Failed to post to {platform}")
+            if await client.post_content(content, use_rag=use_rag, **generation_kwargs):
+                click.echo(f"Posted to {platform} successfully")
+            else:
+                click.echo(f"Failed to post to {platform}")
     except Exception as e:
         logger.error(f"Error posting content: {e}", exc_info=True)
         click.echo(f"Error: {str(e)}")
@@ -361,13 +368,16 @@ async def author_feed(platform: str, username: str) -> None:
             posts = await client.get_author_feed(username)
         else:
             with BlueskyClient() as client:
-                posts = await client.get_author_feed(username)
+                posts = client.get_author_feed(username)
         
+        if not posts:
+            click.echo("No posts found")
+            return
+            
         click.echo(f"\nPosts from {username}:")
-        for post in posts:
-            click.echo(f"Content: {post.content}")
-            click.echo(f"Posted at: {post.created_at}")
-            click.echo(f"Engagement: {post.engagement_metrics}")
+        for post in posts.feed:
+            click.echo(f"Content: {post.post.record.text}")
+            click.echo(f"Posted at: {post.post.record.created_at}")
             click.echo("")
     except Exception as e:
         logger.error(f"Error fetching author feed: {e}")
