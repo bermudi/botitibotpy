@@ -279,9 +279,9 @@ class TwitterClient:
             
             # Extract relevant data from tweets response
             tweets = []
-            for entry in tweets_response.raw.data.user.result.timeline_v2.timeline.instructions[0].entries:
-                if hasattr(entry.content, 'itemContent') and hasattr(entry.content.itemContent, 'tweet_results'):
-                    tweet_result = entry.content.itemContent.tweet_results.result
+            for tweet_data in tweets_response.data:
+                if hasattr(tweet_data, 'result'):
+                    tweet_result = tweet_data.result
                     user_result = tweet_result.core.user_results.result
                     
                     tweets.append({
