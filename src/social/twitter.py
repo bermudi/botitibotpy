@@ -104,8 +104,7 @@ class TwitterClient:
                     self.client.additional_cookies = cookies
                     self._auth_status = True
                     # Initialize API client with cookies
-                    guest_client = self.client.get_guest_client()
-                    self._api = self.client.get_twitter_openapi_python_client(guest_client)
+                    self._api = self.client.get_client_from_cookies(cookies)
                     return True
                 else:
                     logger.warning("Invalid cookies found, creating new ones")
@@ -119,8 +118,7 @@ class TwitterClient:
                 self.client.additional_cookies = cookies
                 self._auth_status = True
                 # Initialize API client with cookies
-                guest_client = self.client.get_guest_client()
-                self._api = self.client.get_twitter_openapi_python_client(guest_client)
+                self._api = self.client.get_client_from_cookies(cookies)
                 return True
             else:
                 logger.error("Failed to create valid cookies")
