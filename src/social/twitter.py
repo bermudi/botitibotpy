@@ -133,10 +133,7 @@ class TwitterClient:
     def get_timeline(self, limit: int = 20) -> Optional[Any]:
         """Fetch user's timeline"""
         try:
-            # Get the tweet API utility
-            tweet_api = self.api.get_tweet_api()
-            # Get the timeline using the tweet API
-            timeline = tweet_api.get_home_latest_timeline(count=limit)
+            timeline = self.api.get_tweet_api().get_home_latest_timeline(count=limit)
             logger.info(f"Successfully fetched {limit} timeline items", extra={
                 'context': {
                     'limit': limit,
@@ -157,9 +154,7 @@ class TwitterClient:
     def get_tweet_thread(self, tweet_id: str) -> Optional[Any]:
         """Fetch a tweet and its replies"""
         try:
-            # Get tweet API utility
-            tweet_api = self.api.get_tweet_api()
-            thread = tweet_api.get_tweet_detail(tweet_id)
+            thread = self.api.get_tweet_api().get_tweet_detail(tweet_id)
             logger.info(f"Successfully fetched thread for tweet {tweet_id}", extra={
                 'context': {
                     'tweet_id': tweet_id,
@@ -180,9 +175,7 @@ class TwitterClient:
     def like_tweet(self, tweet_id: str) -> bool:
         """Like a tweet"""
         try:
-            # Get post API utility
-            post_api = self.api.get_post_api()
-            post_api.favorite_tweet(tweet_id)
+            self.api.get_post_api().favorite_tweet(tweet_id)
             logger.info(f"Successfully liked tweet {tweet_id}", extra={
                 'context': {
                     'tweet_id': tweet_id,
@@ -203,7 +196,7 @@ class TwitterClient:
     def reply_to_tweet(self, tweet_id: str, text: str) -> bool:
         """Reply to a tweet"""
         try:
-            self.api.create_tweet(text=text, reply_to_tweet_id=tweet_id)
+            self.api.get_post_api().post_create_tweet(tweet_text=text, in_reply_to_tweet_id=tweet_id)
             logger.info(f"Successfully replied to tweet {tweet_id}", extra={
                 'context': {
                     'tweet_id': tweet_id,
