@@ -229,16 +229,12 @@ class TwitterClient:
             if screen_name is None:
                 screen_name = Config.TWITTER_USERNAME
             
-            # Get user API utility
-            user_api = self.api.get_user_api()
             # Get user info to get the user ID
-            user_info = user_api.get_user_by_screen_name(screen_name)
+            user_info = self.api.get_user_api().get_user_by_screen_name(screen_name)
             user_id = user_info.data.user.rest_id
             
-            # Get tweet API utility
-            tweet_api = self.api.get_tweet_api()
             # Get user tweets
-            tweets = tweet_api.get_user_tweets(user_id)
+            tweets = self.api.get_tweet_api().get_user_tweets(user_id)
             logger.info(f"Successfully fetched tweets for user {screen_name}", extra={
                 'context': {
                     'screen_name': screen_name,
