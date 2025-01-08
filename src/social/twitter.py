@@ -188,27 +188,34 @@ class TwitterClient:
             comments = []
             if hasattr(thread, 'data') and hasattr(thread.data, 'threaded_conversation_with_injections_v2'):
                 entries = thread.data.threaded_conversation_with_injections_v2.instructions[0].entries
+                logger.debug(f"Found {len(entries)} entries in thread")
                 
                 for entry in entries:
-                    if hasattr(entry, 'content') and hasattr(entry.content, 'items'):
-                        for item in entry.content.items:
-                            if hasattr(item, 'item') and hasattr(item.item, 'itemContent'):
-                                tweet_data = item.item.itemContent
-                                if hasattr(tweet_data, 'tweet_results'):
-                                    tweet_result = tweet_data.tweet_results.result
-                                    if hasattr(tweet_result, 'legacy') and hasattr(tweet_result, 'core'):
-                                        user_result = tweet_result.core.user_results.result
-                                        
-                                        # Check if this is a reply to our tweet
-                                        if (hasattr(tweet_result.legacy, 'in_reply_to_status_id_str') and 
-                                            tweet_result.legacy.in_reply_to_status_id_str == tweet_id):
+                    logger.debug(f"Processing entry type: {type(entry)}")
+                    if hasattr(entry, 'content'):
+                        logger.debug(f"Entry content type: {type(entry.content)}")
+                        if hasattr(entry.content, 'items'):
+                            for item in entry.content.items:
+                                logger.debug(f"Processing item type: {type(item)}")
+                                if hasattr(item, 'item') and hasattr(item.item, 'itemContent'):
+                                    tweet_data = item.item.itemContent
+                                    if hasattr(tweet_data, 'tweet_results'):
+                                        tweet_result = tweet_data.tweet_results.result
+                                        if hasattr(tweet_result, 'legacy') and hasattr(tweet_result, 'core'):
+                                            user_result = tweet_result.core.user_results.result
+                                            logger.debug(f"Found tweet from user: {user_result.legacy.screen_name}")
                                             
-                                            comments.append({
-                                                'id': tweet_result.rest_id,
-                                                'author': user_result.legacy.screen_name,
-                                                'content': tweet_result.legacy.full_text if hasattr(tweet_result.legacy, 'full_text') else tweet_result.legacy.text,
-                                                'created_at': tweet_result.legacy.created_at
-                                            })
+                                            # Check if this is a reply to our tweet
+                                            if (hasattr(tweet_result.legacy, 'in_reply_to_status_id_str')):
+                                                logger.debug(f"Tweet is a reply to: {tweet_result.legacy.in_reply_to_status_id_str}")
+                                                if tweet_result.legacy.in_reply_to_status_id_str == tweet_id:
+                                                    logger.debug("Found a reply to our tweet")
+                                                    comments.append({
+                                                        'id': tweet_result.rest_id,
+                                                        'author': user_result.legacy.screen_name,
+                                                        'content': tweet_result.legacy.full_text if hasattr(tweet_result.legacy, 'full_text') else tweet_result.legacy.text,
+                                                        'created_at': tweet_result.legacy.created_at
+                                                    })
             
             logger.info(f"Successfully fetched thread for tweet {tweet_id} with {len(comments)} replies", extra={
                 'context': {
