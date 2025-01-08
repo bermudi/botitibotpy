@@ -204,15 +204,30 @@ def auth(platform):
                 if client.setup_auth():
                     click.echo("Successfully authenticated with bluesky")
                 else:
-                    click.echo("Failed to authenticate with bluesky")
+                    click.echo("Failed to authenticate with bluesky", err=True)
+                    sys.exit(1)
         elif platform == 'twitter':
             client = TwitterClient()
             if client.setup_auth():
-                click.echo("Successfully authenticated with twitter")
+                click.echo("Successfully authenticated with Twitter")
+                click.echo("\nCurrent status:")
+                click.echo("  - Cookie file: ✓")
+                click.echo("  - Authentication: ✓")
+                try:
+                    # Try to verify credentials by fetching the home timeline
+                    timeline = client.get_timeline(limit=1)
+                    click.echo("  - API access: ✓")
+                except Exception as e:
+                    click.echo("  - API access: ✗")
+                    click.echo(f"\nWarning: Authenticated but API access failed: {str(e)}")
             else:
-                click.echo("Failed to authenticate with twitter")
+                click.echo("Failed to authenticate with Twitter", err=True)
+                if not Config.TWITTER_USERNAME or not Config.TWITTER_PASSWORD:
+                    click.echo("\nError: Twitter credentials not found in config")
+                    click.echo("Please ensure TWITTER_USERNAME and TWITTER_PASSWORD are set in your .env file")
+                sys.exit(1)
     except Exception as e:
-        click.echo(f"Error authenticating with {platform}: {str(e)}")
+        click.echo(f"Error authenticating with {platform}: {str(e)}", err=True)
         sys.exit(1)
 
 @social.command(name='post')

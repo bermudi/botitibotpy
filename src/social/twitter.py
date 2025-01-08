@@ -54,15 +54,29 @@ class TwitterClient:
             }
         })
         self.client = TwitterOpenapiPython()
-        # Set Windows headers as recommended in docs for compatibility
+        # Set required headers for API compatibility
         self.client.additional_api_headers = {
             "sec-ch-ua-platform": '"Windows"',
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+            "Accept": "*/*",
+            "Accept-Language": "en-US,en;q=0.9",
+            "Accept-Encoding": "gzip, deflate, br"
         }
         self.client.additional_browser_headers = {
             "sec-ch-ua-platform": '"Windows"',
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+            "Accept": "*/*",
+            "Accept-Language": "en-US,en;q=0.9",
+            "Accept-Encoding": "gzip, deflate, br"
         }
         self.cookies_path = Path("twitter_cookie.json")
+        self._auth_status = False
         self.setup_auth()
+    
+    @property
+    def is_authenticated(self) -> bool:
+        """Check if client is authenticated"""
+        return self._auth_status
     
     def setup_auth(self) -> bool:
         """Set up authentication using saved cookies or create new ones."""
@@ -70,28 +84,32 @@ class TwitterClient:
         
         if self.cookies_path.exists():
             try:
-                with open(self.cookies_path, 'r') as f:
-                    cookies = json.load(f)
+                cookies = self._load_existing_cookies(self.cookies_path)
+                if self._validate_cookies(cookies):
                     logger.info("Successfully loaded existing cookies")
-                    # Update the client's cookies directly
                     self.client.additional_cookies = cookies
+                    self._auth_status = True
                     return True
+                else:
+                    logger.warning("Invalid cookies found, creating new ones")
             except Exception as e:
                 logger.error(f"Error loading cookies: {str(e)}")
-                # Don't return False here, try creating new cookies instead
         
         try:
-            # Try to create new cookies
             cookies = self._create_new_cookies(self.cookies_path)
-            if cookies:
+            if cookies and self._validate_cookies(cookies):
                 logger.info("Successfully created new cookies")
-                # Update the client's cookies directly
                 self.client.additional_cookies = cookies
+                self._auth_status = True
                 return True
+            else:
+                logger.error("Failed to create valid cookies")
+                self._auth_status = False
+                return False
         except Exception as e:
             logger.error(f"Error creating new cookies: {str(e)}")
-        
-        return False
+            self._auth_status = False
+            return False
 
     def _load_existing_cookies(self, cookie_path: Path) -> Dict:
         """Load existing cookies from file"""
@@ -129,6 +147,10 @@ class TwitterClient:
                 }
             })
             cookies_dict = auth_handler.get_cookies().get_dict()
+            
+            if not cookies_dict:
+                raise ValueError("Failed to obtain cookies from auth handler")
+                
             logger.debug("Successfully obtained cookies", extra={
                 'context': {
                     'cookie_path': str(cookie_path),
@@ -155,12 +177,26 @@ class TwitterClient:
             })
             raise
         
-    def _validate_cookies(self, cookies_dict: Dict) -> None:
+    def _validate_cookies(self, cookies_dict: Dict) -> bool:
         """Validate cookie structure and contents"""
-        required_keys = ['auth_token', 'ct0']  # Add required Twitter cookie keys
-        missing = [key for key in required_keys if key not in cookies_dict]
-        if missing:
-            raise ValueError(f"Invalid cookie structure. Missing keys: {', '.join(missing)}")
+        try:
+            required_keys = ['auth_token', 'ct0']
+            missing = [key for key in required_keys if key not in cookies_dict]
+            
+            if missing:
+                logger.error(f"Invalid cookie structure. Missing keys: {', '.join(missing)}")
+                return False
+                
+            # Check if cookies are not empty
+            for key in required_keys:
+                if not cookies_dict[key]:
+                    logger.error(f"Empty value for required cookie: {key}")
+                    return False
+                    
+            return True
+        except Exception as e:
+            logger.error(f"Error validating cookies: {str(e)}")
+            return False
     
     @retry_on_failure()
     def post_content(self, content: str, use_rag: bool = False, **kwargs) -> bool:
