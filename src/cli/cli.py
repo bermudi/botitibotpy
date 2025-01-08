@@ -44,6 +44,22 @@ def async_command(f):
         return asyncio.run(f(*args, **kwargs))
     return update_wrapper(wrapper, f)
 
+def get_client(platform: str):
+    """Get the appropriate client for the specified platform."""
+    try:
+        if platform == 'twitter':
+            from ..social.twitter import TwitterClient
+            return TwitterClient()
+        elif platform == 'bluesky':
+            from ..social.bluesky import BlueskyClient
+            return BlueskyClient()
+        else:
+            logger.error(f"Unsupported platform: {platform}")
+            return None
+    except Exception as e:
+        logger.error(f"Error initializing {platform} client: {e}", exc_info=True)
+        return None
+
 @click.group()
 @click.option('--debug', is_flag=True, help='Enable debug logging')
 def main(debug):
@@ -234,81 +250,54 @@ async def auth(platform):
 @social.command(name='post')
 @click.argument('platform', type=click.Choice(['twitter', 'bluesky']))
 @click.argument('content')
-@click.option('--schedule', '-s', help='Schedule post for future (format: YYYY-MM-DD HH:MM)')
-@click.option('--use-rag', is_flag=True, default=False, help='Use RAG for content generation')
-@click.option('--length', type=int, default=280, help='Maximum content length')
-@click.option('--tone', type=click.Choice(['casual', 'professional', 'humorous']), default='casual', help='Content tone')
-@click.option('--style', type=click.Choice(['tweet', 'thread', 'article']), default='tweet', help='Content style')
+@click.option('--schedule', type=str, help='Schedule the post for a specific time (format: YYYY-MM-DD HH:MM:SS)')
+@click.option('--use-rag', is_flag=True, help='Use RAG for content generation')
+@click.option('--tone', type=str, help='Tone for content generation')
+@click.option('--style', type=str, help='Style for content generation')
+@click.option('--length', type=str, help='Length for content generation')
+@click.option('--keywords', type=str, help='Keywords for content generation')
+@click.option('--hashtags', type=str, help='Hashtags for content generation')
+@click.option('--emojis', type=str, help='Emojis for content generation')
 @async_command
-async def post(platform: str, content: str, schedule: Optional[str] = None, use_rag: bool = False,
-               length: Optional[int] = None, tone: Optional[str] = None, style: Optional[str] = None) -> None:
-    """Post content to a social media platform with optional content generation"""
+async def post(platform: str, content: str, schedule: Optional[str] = None, use_rag: bool = False, **kwargs):
+    """Post content to a social media platform."""
     try:
-        # Prepare generation kwargs if any generation options are provided
-        generation_kwargs = {}
-        if any([length, tone, style]):
-            generation_kwargs.update({
-                'max_length': length,
-                'tone': tone,
-                'style': style
-            })
+        # Get the client for the specified platform
+        client = get_client(platform)
+        if not client:
+            click.echo(f"Failed to initialize {platform} client")
+            return
 
+        # Extract generation kwargs
+        generation_kwargs = {k: v for k, v in kwargs.items() if v is not None}
+
+        # If schedule is provided, use the queue manager
         if schedule:
             try:
-                schedule_time = datetime.strptime(schedule, "%Y-%m-%d %H:%M")
+                scheduled_time = datetime.strptime(schedule, '%Y-%m-%d %H:%M:%S')
+                queue_manager = QueueManager()
+                queue_manager.add_task(
+                    platform=platform,
+                    task_type='post',
+                    content=content,
+                    scheduled_time=scheduled_time,
+                    use_rag=use_rag,
+                    generation_kwargs=generation_kwargs
+                )
+                click.echo(f"Post scheduled for {schedule}")
+                return
             except ValueError:
-                click.echo("Invalid schedule format. Use YYYY-MM-DD HH:MM", err=True)
-                sys.exit(1)
-                
-            db = get_db()
-            queue = QueueManager(db=db)
-            await queue.start()
-            try:
-                if platform == 'twitter':
-                    client = TwitterClient()
-                    task = Task(
-                        id=f"post_{datetime.now().timestamp()}",
-                        priority=TaskPriority.MEDIUM,
-                        created_at=datetime.now(),
-                        coroutine=client.post_content,
-                        args=(content,),
-                        kwargs={'use_rag': use_rag, **generation_kwargs}
-                    )
-                else:
-                    client = BlueskyClient()
-                    task = Task(
-                        id=f"post_{datetime.now().timestamp()}",
-                        priority=TaskPriority.MEDIUM,
-                        created_at=datetime.now(),
-                        coroutine=client.post_content,
-                        args=(content,),
-                        kwargs={'use_rag': use_rag, **generation_kwargs}
-                    )
-                post_id = await queue.add_task(task, scheduled_time=schedule_time)
-                click.echo(f"Post scheduled with ID: {post_id}")
-            finally:
-                await queue.shutdown()
-                db.close()
+                click.echo("Invalid schedule format. Use YYYY-MM-DD HH:MM:SS")
+                return
+
+        # Post directly if no schedule is provided
+        if await client.post_content(content, use_rag=use_rag, **generation_kwargs):
+            click.echo(f"Posted to {platform} successfully")
         else:
-            if platform == 'twitter':
-                client = TwitterClient()
-                if client.post_content(content, use_rag=use_rag, **generation_kwargs):
-                    click.echo("Posted to Twitter successfully")
-                else:
-                    click.echo("Failed to post to Twitter", err=True)
-                    sys.exit(1)
-            elif platform == 'bluesky':
-                with BlueskyClient() as client:
-                    result = client.post_content(content, use_rag=use_rag, **generation_kwargs)
-                    if result:
-                        click.echo("Posted to Bluesky successfully")
-                    else:
-                        click.echo("Failed to post to Bluesky", err=True)
-                        sys.exit(1)
+            click.echo(f"Failed to post to {platform}")
     except Exception as e:
-        logger.error(f"Error posting to {platform}: {e}")
-        click.echo(f"Error: {str(e)}", err=True)
-        sys.exit(1)
+        logger.error(f"Error posting content: {e}", exc_info=True)
+        click.echo(f"Error: {str(e)}")
 
 @social.command(name='list-scheduled')
 @async_command

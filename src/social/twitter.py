@@ -178,20 +178,28 @@ class TwitterClient:
         try:
             thread = self.api.get_tweet_api().get_tweet_detail(
                 focal_tweet_id=tweet_id,
-                controller_data={"includeReplies": True}
+                extra_param={"includeReplies": True}
             )
+            
+            logger.debug(f"Thread response type: {type(thread)}")
+            logger.debug(f"Thread response raw type: {type(thread.raw)}")
+            logger.debug(f"Thread response raw dir: {dir(thread.raw)}")
+            logger.debug(f"Thread response raw: {thread.raw}")
+            
             # Extract relevant data from thread response
             comments = []
             for tweet_data in thread.data:
-                if hasattr(tweet_data, 'tweet') and hasattr(tweet_data, 'user'):
-                    tweet = tweet_data.tweet
-                    user = tweet_data.user
-                    if hasattr(tweet.legacy, 'in_reply_to_status_id_str') and tweet.legacy.in_reply_to_status_id_str == tweet_id:
+                if hasattr(tweet_data, 'result'):
+                    tweet_result = tweet_data.result
+                    user_result = tweet_result.core.user_results.result
+                    
+                    if hasattr(tweet_result.legacy, 'in_reply_to_status_id_str') and tweet_result.legacy.in_reply_to_status_id_str == tweet_id:
                         comments.append({
-                            'author': user.legacy.screen_name,
-                            'content': tweet.legacy.full_text if hasattr(tweet.legacy, 'full_text') else tweet.legacy.text,
-                            'created_at': tweet.legacy.created_at
+                            'author': user_result.legacy.screen_name,
+                            'content': tweet_result.legacy.full_text if hasattr(tweet_result.legacy, 'full_text') else tweet_result.legacy.text,
+                            'created_at': tweet_result.legacy.created_at
                         })
+            
             logger.info(f"Successfully fetched thread for tweet {tweet_id}", extra={
                 'context': {
                     'tweet_id': tweet_id,
@@ -209,17 +217,16 @@ class TwitterClient:
             raise
             
     @retry_on_failure()
-    async def like_tweet(self, tweet_id: str) -> bool:
-        """Like a tweet"""
+    async def like_tweet(self, tweet_id: str) -> None:
+        """Like a tweet."""
         try:
-            self.api.get_post_api().create_favorite(tweet_id=tweet_id)
+            self.api.get_post_api().post_favorite_tweet(tweet_id=tweet_id)
             logger.info(f"Successfully liked tweet {tweet_id}", extra={
                 'context': {
                     'tweet_id': tweet_id,
                     'component': 'twitter.like'
                 }
             })
-            return True
         except Exception as e:
             logger.error(f"Error liking tweet: {e}", exc_info=True, extra={
                 'context': {
@@ -233,9 +240,9 @@ class TwitterClient:
     async def reply_to_tweet(self, tweet_id: str, text: str) -> bool:
         """Reply to a tweet"""
         try:
-            self.api.get_post_api().create_tweet(
-                text=text,
-                reply={"in_reply_to_tweet_id": tweet_id}
+            self.api.get_post_api().post_create_tweet(
+                tweet_text=text,
+                in_reply_to_tweet_id=tweet_id
             )
             logger.info(f"Successfully replied to tweet {tweet_id}", extra={
                 'context': {
@@ -430,7 +437,7 @@ class TwitterClient:
                     return False
 
             # Create tweet with correct method and parameters
-            self.api.get_post_api().create_tweet(text=content)
+            self.api.get_post_api().post_create_tweet(tweet_text=content)
             logger.info("Successfully posted content to Twitter", extra={
                 'context': {
                     'content': content,
