@@ -181,15 +181,32 @@ class TwitterClient:
                 focal_tweet_id=tweet_id
             )
             
-            logger.debug(f"Raw tweet response: {tweet_response.raw}")
+            logger.debug(f"Raw tweet response type: {type(tweet_response)}")
+            logger.debug(f"Raw tweet response data type: {type(tweet_response.data)}")
+            logger.debug(f"Raw tweet response data: {tweet_response.data}")
             
-            if not hasattr(tweet_response, 'data') or not hasattr(tweet_response.data, 'tweet_results'):
-                logger.error("Invalid tweet response structure")
+            if not hasattr(tweet_response, 'data'):
+                logger.error("No data in tweet response")
                 return []
                 
-            # Get the author's ID
-            author_id = tweet_response.data.tweet_results.result.core.user_results.result.rest_id
-            logger.debug(f"Found tweet author ID: {author_id}")
+            # The response structure is different - it's a list of entries
+            if isinstance(tweet_response.data, list):
+                for entry in tweet_response.data:
+                    logger.debug(f"Entry type: {type(entry)}")
+                    logger.debug(f"Entry attributes: {dir(entry)}")
+                    if hasattr(entry, 'tweet_results'):
+                        tweet_result = entry.tweet_results.result
+                        author_id = tweet_result.core.user_results.result.rest_id
+                        logger.debug(f"Found tweet author ID: {author_id}")
+                        break
+                    elif hasattr(entry, 'result'):
+                        tweet_result = entry.result
+                        author_id = tweet_result.core.user_results.result.rest_id
+                        logger.debug(f"Found tweet author ID: {author_id}")
+                        break
+            else:
+                logger.error("Unexpected tweet response data type")
+                return []
             
             # Get all tweets and replies from the author
             response = self.api.get_tweet_api().get_user_tweets_and_replies(
@@ -200,12 +217,16 @@ class TwitterClient:
                 }
             )
             
-            logger.debug(f"Raw thread response: {response.raw}")
+            logger.debug(f"Raw thread response type: {type(response)}")
+            logger.debug(f"Raw thread response data type: {type(response.data)}")
+            logger.debug(f"Raw thread response data: {response.data}")
             
             # Extract relevant data from thread response
             comments = []
             if hasattr(response, 'data') and isinstance(response.data, list):
                 for tweet_data in response.data:
+                    logger.debug(f"Tweet data type: {type(tweet_data)}")
+                    logger.debug(f"Tweet data attributes: {dir(tweet_data)}")
                     if hasattr(tweet_data, 'tweet') and hasattr(tweet_data.tweet, 'legacy'):
                         tweet = tweet_data.tweet
                         # Check if this is a reply to our tweet
