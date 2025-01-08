@@ -371,7 +371,10 @@ class TwitterClient:
                     logger.error("Failed to generate content")
                     return False
 
-            self.api.create_tweet(text=content)
+            # Get post API utility
+            post_api = self.api.get_post_api()
+            # Create the tweet
+            post_api.create_tweet(text=content)
             logger.info("Successfully posted content to Twitter", extra={
                 'context': {
                     'content': content,
