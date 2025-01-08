@@ -880,3 +880,41 @@ class ContentGenerator:
                 }
             })
             return [{'type': 'error', 'error': str(e)}]
+
+    def generate_reply(self, original_post: str, comment_text: str) -> Optional[str]:
+        """Generate a reply to a comment using direct LLM"""
+        try:
+            # Build a prompt that includes both the original post and the comment
+            prompt = f"""Given this original post:
+"{original_post}"
+
+And this comment:
+"{comment_text}"
+
+Generate a friendly and engaging reply that:
+1. Acknowledges the comment
+2. Maintains a conversational tone
+3. Adds value to the discussion
+4. Stays relevant to the original post's topic
+
+Reply:"""
+            
+            logger.debug("Generating reply with prompt", extra={
+                'context': {
+                    'original_post': original_post,
+                    'comment': comment_text,
+                    'component': 'content_generator.reply'
+                }
+            })
+            
+            response = self.llm.complete(prompt)
+            logger.info("Reply generated successfully", extra={
+                'context': {
+                    'component': 'content_generator.reply'
+                }
+            })
+            return response.text
+            
+        except Exception as e:
+            logger.error(f"Error generating reply: {str(e)}", exc_info=True)
+            return None
