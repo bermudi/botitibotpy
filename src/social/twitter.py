@@ -76,6 +76,8 @@ class TwitterClient:
                     try:
                         user_id = self.client.user_id()
                         if user_id:
+                            # Unlock the client for write operations
+                            self.client.unlock()
                             self._auth_status = True
                             return True
                     except Exception as e:
@@ -91,6 +93,10 @@ class TwitterClient:
             
             # Create a new client and login
             self.client = Client()
+            
+            # First get a guest token
+            self.client.get_guest_token()
+            
             # Perform login with required arguments
             self.client.login(
                 auth_info_1=Config.TWITTER_USERNAME,
@@ -101,6 +107,9 @@ class TwitterClient:
             user_id = self.client.user_id()
             if not user_id:
                 raise ValueError("Login failed - could not get user ID")
+                
+            # Unlock the client for write operations
+            self.client.unlock()
             
             # Save the cookies for future use
             cookies = self.client.get_cookies()
