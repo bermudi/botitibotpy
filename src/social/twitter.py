@@ -74,10 +74,10 @@ class TwitterClient:
                     self.client.set_cookies(cookies)
                     # Verify the cookies work by getting the user ID
                     try:
-                        user_id = self.client.user_id()
+                        user_id = await self.client.user_id()
                         if user_id:
                             # Unlock the client for write operations
-                            self.client.unlock()
+                            await self.client.unlock()
                             self._auth_status = True
                             return True
                     except Exception as e:
@@ -95,21 +95,21 @@ class TwitterClient:
             self.client = Client()
             
             # First get a guest token
-            self.client.get_guest_token()
+            await self.client.get_guest_token()
             
             # Perform login with required arguments
-            self.client.login(
+            await self.client.login(
                 auth_info_1=Config.TWITTER_USERNAME,
                 password=Config.TWITTER_PASSWORD
             )
             
             # Verify login was successful
-            user_id = self.client.user_id()
+            user_id = await self.client.user_id()
             if not user_id:
                 raise ValueError("Login failed - could not get user ID")
                 
             # Unlock the client for write operations
-            self.client.unlock()
+            await self.client.unlock()
             
             # Save the cookies for future use
             cookies = self.client.get_cookies()
@@ -357,7 +357,7 @@ class TwitterClient:
                     'auth_status': self._auth_status,
                     'client_state': {
                         'has_cookies': bool(self.client.get_cookies()),
-                        'user_id': self.client.user_id()
+                        'user_id': await self.client.user_id()
                     }
                 }
             })
