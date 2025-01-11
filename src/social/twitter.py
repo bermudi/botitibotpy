@@ -71,7 +71,7 @@ class TwitterClient:
                 if self._validate_cookies(cookies):
                     logger.info("Successfully loaded existing cookies")
                     # Set cookies directly on the client
-                    self.client.cookies = cookies
+                    await self.client.set_cookies(cookies)
                     # Verify the cookies work by getting the user ID
                     try:
                         user_id = await self.client.user_id()
@@ -103,7 +103,7 @@ class TwitterClient:
                 raise ValueError("Login failed - could not get user ID")
             
             # Save the cookies for future use
-            cookies = self.client.cookies
+            cookies = await self.client.get_cookies()
             with open(self.cookies_path, "w") as f:
                 json.dump(cookies, f, ensure_ascii=False, indent=4)
             
