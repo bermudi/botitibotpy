@@ -225,15 +225,19 @@ async def auth(platform):
                     sys.exit(1)
         elif platform == 'twitter':
             client = TwitterClient()
-            if client.setup_auth():
+            if await client.setup_auth():
                 click.echo("Successfully authenticated with Twitter")
                 click.echo("\nCurrent status:")
                 click.echo("  - Cookie file: ✓")
                 click.echo("  - Authentication: ✓")
                 try:
-                    # Try to verify credentials by fetching the home timeline
+                    # Try to verify credentials by fetching the timeline
                     timeline = await client.get_timeline(limit=1)
-                    click.echo("  - API access: ✓")
+                    if timeline:
+                        click.echo("  - API access: ✓")
+                    else:
+                        click.echo("  - API access: ✗")
+                        click.echo("\nWarning: Timeline fetch returned no data")
                 except Exception as e:
                     click.echo("  - API access: ✗")
                     click.echo(f"\nWarning: Authenticated but API access failed: {str(e)}")
