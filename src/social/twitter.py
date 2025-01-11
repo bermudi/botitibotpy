@@ -345,17 +345,44 @@ class TwitterClient:
                     logger.error("Failed to generate content")
                     return False
 
-            # Create tweet
-            await self.client.create_tweet(content)
-            logger.info("Successfully posted content to Twitter", extra={
+            # Verify authentication status
+            if not self._auth_status:
+                logger.error("Client is not authenticated")
+                return False
+
+            # Log the current state
+            logger.debug("Attempting to post tweet", extra={
                 'context': {
                     'content': content,
-                    'component': 'twitter.post'
+                    'auth_status': self._auth_status,
+                    'client_state': {
+                        'has_cookies': bool(self.client.get_cookies()),
+                        'user_id': self.client.user_id()
+                    }
                 }
             })
-            return True
+
+            try:
+                # Create tweet
+                await self.client.create_tweet(content)
+                logger.info("Successfully posted content to Twitter", extra={
+                    'context': {
+                        'content': content,
+                        'component': 'twitter.post'
+                    }
+                })
+                return True
+            except Exception as e:
+                logger.error(f"Error posting to Twitter: {str(e)}", exc_info=True, extra={
+                    'context': {
+                        'error': str(e),
+                        'error_type': type(e).__name__,
+                        'component': 'twitter.post'
+                    }
+                })
+                raise
         except Exception as e:
-            logger.error(f"Error posting to Twitter: {e}", exc_info=True, extra={
+            logger.error(f"Error posting to Twitter: {str(e)}", exc_info=True, extra={
                 'context': {
                     'error': str(e),
                     'component': 'twitter.post'

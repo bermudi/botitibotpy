@@ -272,6 +272,12 @@ async def post(platform: str, content: str, schedule: Optional[str] = None, use_
             click.echo(f"Failed to initialize {platform} client")
             return
 
+        # Ensure client is authenticated
+        if platform == 'twitter':
+            if not await client.setup_auth():
+                click.echo("Failed to authenticate with Twitter")
+                return
+
         # Extract generation kwargs
         generation_kwargs = {k: v for k, v in kwargs.items() if v is not None}
 
@@ -309,6 +315,7 @@ async def post(platform: str, content: str, schedule: Optional[str] = None, use_
     except Exception as e:
         logger.error(f"Error posting content: {e}", exc_info=True)
         click.echo(f"Error: {str(e)}")
+        sys.exit(1)
 
 @social.command(name='list-scheduled')
 @async_command
