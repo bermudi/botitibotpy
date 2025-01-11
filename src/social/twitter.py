@@ -14,10 +14,10 @@ def retry_on_failure(max_retries: int = 3, delay: int = 1):
     """Decorator to retry failed API calls"""
     def decorator(func):
         @wraps(func)
-        def wrapper(*args, **kwargs):
+        async def wrapper(*args, **kwargs):
             for attempt in range(max_retries):
                 try:
-                    return func(*args, **kwargs)
+                    return await func(*args, **kwargs)
                 except Exception as e:
                     if attempt == max_retries - 1:
                         logger.error(f"Failed after {max_retries} attempts", exc_info=True, extra={
@@ -55,14 +55,13 @@ class TwitterClient:
         self.client = Client()
         self.cookies_path = Path("twitter_cookie.json")
         self._auth_status = False
-        self.setup_auth()
-    
+        
     @property
     def is_authenticated(self) -> bool:
         """Check if client is authenticated"""
         return self._auth_status
     
-    def setup_auth(self) -> bool:
+    async def setup_auth(self) -> bool:
         """Set up authentication using saved cookies or create new ones."""
         logger.debug("Setting up Twitter authentication")
         
@@ -71,9 +70,16 @@ class TwitterClient:
                 cookies = self._load_existing_cookies(self.cookies_path)
                 if self._validate_cookies(cookies):
                     logger.info("Successfully loaded existing cookies")
-                    self.client.set_cookies(cookies)
-                    self._auth_status = True
-                    return True
+                    # Set cookies directly on the client
+                    self.client.cookies = cookies
+                    # Verify the cookies work by getting the user ID
+                    try:
+                        user_id = await self.client.user_id()
+                        if user_id:
+                            self._auth_status = True
+                            return True
+                    except Exception as e:
+                        logger.warning(f"Existing cookies are invalid: {str(e)}")
                 else:
                     logger.warning("Invalid cookies found, creating new ones")
             except Exception as e:
@@ -83,11 +89,21 @@ class TwitterClient:
             if not Config.TWITTER_USERNAME or not Config.TWITTER_PASSWORD:
                 raise ValueError("Twitter credentials not found in config")
             
-            # Use Twikit's native login method
-            self.client.login(Config.TWITTER_USERNAME, Config.TWITTER_PASSWORD)
+            # Create a new client and login
+            self.client = Client()
+            # Perform login with required arguments
+            await self.client.login(
+                auth_info_1=Config.TWITTER_USERNAME,
+                password=Config.TWITTER_PASSWORD
+            )
+            
+            # Verify login was successful
+            user_id = await self.client.user_id()
+            if not user_id:
+                raise ValueError("Login failed - could not get user ID")
             
             # Save the cookies for future use
-            cookies = self.client.get_cookies()
+            cookies = self.client.cookies
             with open(self.cookies_path, "w") as f:
                 json.dump(cookies, f, ensure_ascii=False, indent=4)
             
@@ -96,7 +112,7 @@ class TwitterClient:
             return True
             
         except Exception as e:
-            logger.error(f"Error creating new cookies: {str(e)}")
+            logger.error(f"Error during authentication: {str(e)}")
             self._auth_status = False
             return False
             
@@ -136,7 +152,7 @@ class TwitterClient:
     async def get_timeline(self, limit: int = 20) -> Optional[Any]:
         """Fetch user's timeline"""
         try:
-            timeline = self.client.get_timeline(count=limit)
+            timeline = await self.client.get_timeline(count=limit)
             tweets = []
             for tweet in timeline:
                 tweets.append({
@@ -171,13 +187,13 @@ class TwitterClient:
     async def get_tweet_thread(self, tweet_id: str) -> Optional[Any]:
         """Fetch a tweet and its replies"""
         try:
-            tweet = self.client.get_tweet_by_id(tweet_id)
+            tweet = await self.client.get_tweet_by_id(tweet_id)
             if not tweet:
                 logger.error("Tweet not found")
                 return []
                 
             # Get replies to the tweet
-            replies = self.client.search_tweet(f"conversation_id:{tweet_id}")
+            replies = await self.client.search_tweet(f"conversation_id:{tweet_id}")
             
             comments = []
             for reply in replies:
@@ -205,7 +221,7 @@ class TwitterClient:
     async def like_tweet(self, tweet_id: str) -> None:
         """Like a tweet."""
         try:
-            self.client.favorite_tweet(tweet_id)
+            await self.client.favorite_tweet(tweet_id)
             logger.info(f"Successfully liked tweet {tweet_id}", extra={
                 'context': {
                     'tweet_id': tweet_id,
@@ -225,7 +241,7 @@ class TwitterClient:
     async def reply_to_tweet(self, tweet_id: str, text: str) -> bool:
         """Reply to a tweet"""
         try:
-            self.client.create_tweet(text, in_reply_to_status_id=tweet_id)
+            await self.client.create_tweet(text, in_reply_to_status_id=tweet_id)
             logger.info(f"Successfully replied to tweet {tweet_id}", extra={
                 'context': {
                     'tweet_id': tweet_id,
@@ -252,13 +268,13 @@ class TwitterClient:
                 screen_name = Config.TWITTER_USERNAME
             
             # Get user info
-            user = self.client.get_user_by_screen_name(screen_name)
+            user = await self.client.get_user_by_screen_name(screen_name)
             if not user:
                 logger.error(f"User {screen_name} not found")
                 return None
             
             # Get user tweets
-            tweets_response = self.client.get_user_tweets(user.id)
+            tweets_response = await self.client.get_user_tweets(user.id)
             
             tweets = []
             for tweet in tweets_response:
@@ -321,7 +337,7 @@ class TwitterClient:
                     return False
 
             # Create tweet
-            self.client.create_tweet(content)
+            await self.client.create_tweet(content)
             logger.info("Successfully posted content to Twitter", extra={
                 'context': {
                     'content': content,
@@ -342,7 +358,7 @@ class TwitterClient:
     async def post_tweet(self, content: str) -> Optional[Dict[str, Any]]:
         """Post a new tweet"""
         try:
-            tweet = self.client.create_tweet(content)
+            tweet = await self.client.create_tweet(content)
             if tweet:
                 return {
                     'id': tweet.id,
@@ -357,7 +373,7 @@ class TwitterClient:
     async def get_tweet_metrics(self, tweet_id: str) -> Optional[Dict[str, int]]:
         """Get engagement metrics for a tweet"""
         try:
-            tweet = self.client.get_tweet_by_id(tweet_id)
+            tweet = await self.client.get_tweet_by_id(tweet_id)
             if tweet:
                 return {
                     'likes': tweet.favorite_count,
