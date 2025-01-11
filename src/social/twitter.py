@@ -1,5 +1,4 @@
-from twitter_openapi_python import TwitterOpenapiPython
-from tweepy_authlib import CookieSessionUserHandler
+from twikit import Client
 import json
 import logging
 from pathlib import Path
@@ -53,44 +52,15 @@ class TwitterClient:
                 'component': 'twitter.client'
             }
         })
-        self.client = TwitterOpenapiPython()
-        # Set required headers for API compatibility
-        self.client.additional_api_headers = {
-            "sec-ch-ua-platform": '"Linux"',
-            "User-Agent": "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-            "Accept": "*/*",
-            "Accept-Language": "en-US,en;q=0.9",
-            "Accept-Encoding": "gzip, deflate, br"
-        }
-        self.client.additional_browser_headers = {
-            "sec-ch-ua-platform": '"Linux"',
-            "User-Agent": "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-            "Accept": "*/*",
-            "Accept-Language": "en-US,en;q=0.9",
-            "Accept-Encoding": "gzip, deflate, br"
-        }
+        self.client = Client()
         self.cookies_path = Path("twitter_cookie.json")
         self._auth_status = False
-        self._api = None
         self.setup_auth()
     
     @property
     def is_authenticated(self) -> bool:
         """Check if client is authenticated"""
         return self._auth_status
-        
-    @property
-    def api(self):
-        """Get the Twitter API client"""
-        if not self._api:
-            # First get the guest token
-            guest_client = self.client.get_guest_client()
-            # Then get the authenticated client
-            if self.client.additional_cookies:
-                self._api = self.client.get_client_from_cookies(self.client.additional_cookies)
-            else:
-                self._api = guest_client
-        return self._api
     
     def setup_auth(self) -> bool:
         """Set up authentication using saved cookies or create new ones."""
@@ -101,10 +71,8 @@ class TwitterClient:
                 cookies = self._load_existing_cookies(self.cookies_path)
                 if self._validate_cookies(cookies):
                     logger.info("Successfully loaded existing cookies")
-                    self.client.additional_cookies = cookies
+                    self.client.set_cookies(cookies)
                     self._auth_status = True
-                    # Initialize API client with cookies
-                    self._api = self.client.get_client_from_cookies(cookies)
                     return True
                 else:
                     logger.warning("Invalid cookies found, creating new ones")
@@ -112,49 +80,76 @@ class TwitterClient:
                 logger.error(f"Error loading cookies: {str(e)}")
         
         try:
-            cookies = self._create_new_cookies(self.cookies_path)
-            if cookies and self._validate_cookies(cookies):
-                logger.info("Successfully created new cookies")
-                self.client.additional_cookies = cookies
-                self._auth_status = True
-                # Initialize API client with cookies
-                self._api = self.client.get_client_from_cookies(cookies)
-                return True
-            else:
-                logger.error("Failed to create valid cookies")
-                self._auth_status = False
-                return False
+            if not Config.TWITTER_USERNAME or not Config.TWITTER_PASSWORD:
+                raise ValueError("Twitter credentials not found in config")
+            
+            # Use Twikit's native login method
+            self.client.login(Config.TWITTER_USERNAME, Config.TWITTER_PASSWORD)
+            
+            # Save the cookies for future use
+            cookies = self.client.get_cookies()
+            with open(self.cookies_path, "w") as f:
+                json.dump(cookies, f, ensure_ascii=False, indent=4)
+            
+            logger.info("Successfully created and saved new cookies")
+            self._auth_status = True
+            return True
+            
         except Exception as e:
             logger.error(f"Error creating new cookies: {str(e)}")
             self._auth_status = False
             return False
             
+    def _load_existing_cookies(self, cookie_path: Path) -> Dict:
+        """Load existing cookies from file"""
+        logger.debug("Loading existing cookies", extra={
+            'context': {
+                'cookie_path': str(cookie_path),
+                'component': 'twitter.auth'
+            }
+        })
+        with open(cookie_path, "r") as f:
+            return json.load(f)
+            
+    def _validate_cookies(self, cookies_dict: Dict) -> bool:
+        """Validate cookie structure and contents"""
+        try:
+            required_keys = ['auth_token', 'ct0']
+            missing = [key for key in required_keys if key not in cookies_dict]
+            
+            if missing:
+                logger.error(f"Invalid cookie structure. Missing keys: {', '.join(missing)}")
+                return False
+                
+            # Check if cookies are not empty
+            for key in required_keys:
+                if not cookies_dict[key]:
+                    logger.error(f"Empty value for required cookie: {key}")
+                    return False
+                    
+            return True
+        except Exception as e:
+            logger.error(f"Error validating cookies: {str(e)}")
+            return False
+    
     @retry_on_failure()
     async def get_timeline(self, limit: int = 20) -> Optional[Any]:
         """Fetch user's timeline"""
         try:
-            timeline = self.api.get_tweet_api().get_home_timeline(count=limit)
-            logger.debug(f"Timeline response type: {type(timeline)}")
-            logger.debug(f"Timeline raw type: {type(timeline.raw)}")
-            logger.debug(f"Timeline raw dir: {dir(timeline.raw)}")
-            
-            # Extract relevant data from timeline response
+            timeline = self.client.get_timeline(count=limit)
             tweets = []
-            for tweet_data in timeline.data:
-                if hasattr(tweet_data, 'tweet') and hasattr(tweet_data, 'user'):
-                    tweet = tweet_data.tweet
-                    user = tweet_data.user
-                    tweets.append({
-                        'content': tweet.legacy.full_text if hasattr(tweet.legacy, 'full_text') else tweet.legacy.text,
-                        'created_at': tweet.legacy.created_at,
-                        'author': user.legacy.screen_name,
-                        'engagement_metrics': {
-                            'likes': tweet.legacy.favorite_count,
-                            'retweets': tweet.legacy.retweet_count,
-                            'replies': tweet.legacy.reply_count,
-                            'views': tweet.views.count if hasattr(tweet, 'views') else 0
-                        }
-                    })
+            for tweet in timeline:
+                tweets.append({
+                    'content': tweet.text,
+                    'created_at': tweet.created_at,
+                    'author': tweet.user.screen_name,
+                    'engagement_metrics': {
+                        'likes': tweet.favorite_count,
+                        'retweets': tweet.retweet_count,
+                        'replies': tweet.reply_count,
+                        'views': getattr(tweet, 'view_count', 0)
+                    }
+                })
             
             logger.info(f"Successfully fetched {len(tweets)} timeline items", extra={
                 'context': {
@@ -176,124 +171,31 @@ class TwitterClient:
     async def get_tweet_thread(self, tweet_id: str) -> Optional[Any]:
         """Fetch a tweet and its replies"""
         try:
-            # First get the tweet to get the author's ID
-            tweet = self.api.get_tweet_api().get_tweet_detail(focal_tweet_id=tweet_id)
-            
-            logger.debug("=== Tweet Response Analysis ===")
-            logger.debug(f"Response type: {type(tweet)}")
-            if hasattr(tweet, 'data'):
-                logger.debug(f"Data type: {type(tweet.data)}")
-                logger.debug(f"Data attributes: {dir(tweet.data)}")
-                logger.debug(f"Raw data: {tweet.data}")
+            tweet = self.client.get_tweet_by_id(tweet_id)
+            if not tweet:
+                logger.error("Tweet not found")
+                return []
                 
-                if hasattr(tweet.data, 'tweet_results'):
-                    logger.debug("Found tweet_results")
-                    logger.debug(f"Tweet results type: {type(tweet.data.tweet_results)}")
-                    logger.debug(f"Tweet results attributes: {dir(tweet.data.tweet_results)}")
-                    
-                    if hasattr(tweet.data.tweet_results, 'result'):
-                        logger.debug("Found result")
-                        result = tweet.data.tweet_results.result
-                        logger.debug(f"Result type: {type(result)}")
-                        logger.debug(f"Result attributes: {dir(result)}")
-                        
-                        if hasattr(result, 'core'):
-                            logger.debug("Found core")
-                            logger.debug(f"Core type: {type(result.core)}")
-                            logger.debug(f"Core attributes: {dir(result.core)}")
-                            
-                            if hasattr(result.core, 'user_results'):
-                                logger.debug("Found user_results")
-                                logger.debug(f"User results type: {type(result.core.user_results)}")
-                                logger.debug(f"User results attributes: {dir(result.core.user_results)}")
-                                
-                                if hasattr(result.core.user_results, 'result'):
-                                    logger.debug("Found user result")
-                                    user = result.core.user_results.result
-                                    logger.debug(f"User type: {type(user)}")
-                                    logger.debug(f"User attributes: {dir(user)}")
-                                    
-                                    author_id = user.rest_id
-                                    logger.debug(f"Found tweet author ID: {author_id}")
-                                    
-                                    # Get all tweets and replies from the author
-                                    response = self.api.get_tweet_api().get_user_tweets_and_replies(
-                                        user_id=author_id,
-                                        count=100,  # Get a good number of recent tweets
-                                        extra_param={
-                                            "includeReplies": True
-                                        }
-                                    )
-                                    
-                                    logger.debug("=== Thread Response Analysis ===")
-                                    logger.debug(f"Response type: {type(response)}")
-                                    if hasattr(response, 'data'):
-                                        logger.debug(f"Data type: {type(response.data)}")
-                                        logger.debug(f"Data attributes: {dir(response.data)}")
-                                        logger.debug(f"Raw data: {response.data}")
-                                        
-                                        # Extract relevant data from thread response
-                                        comments = []
-                                        if isinstance(response.data, list):
-                                            for tweet_data in response.data:
-                                                logger.debug("=== Tweet Data Analysis ===")
-                                                logger.debug(f"Tweet data type: {type(tweet_data)}")
-                                                logger.debug(f"Tweet data attributes: {dir(tweet_data)}")
-                                                
-                                                # Try different tweet data structures
-                                                tweet = None
-                                                user = None
-                                                
-                                                if hasattr(tweet_data, 'tweet') and hasattr(tweet_data.tweet, 'legacy'):
-                                                    tweet = tweet_data.tweet
-                                                    user = tweet_data.user
-                                                    logger.debug("Found tweet and user in tweet_data structure")
-                                                elif hasattr(tweet_data, 'legacy'):
-                                                    tweet = tweet_data
-                                                    user = tweet_data.core.user_results.result
-                                                    logger.debug("Found tweet and user in legacy structure")
-                                                
-                                                if tweet and user:
-                                                    logger.debug(f"Tweet attributes: {dir(tweet)}")
-                                                    logger.debug(f"User attributes: {dir(user)}")
-                                                    
-                                                    # Check if this is a reply to our tweet
-                                                    if hasattr(tweet.legacy, 'in_reply_to_status_id_str'):
-                                                        reply_to = tweet.legacy.in_reply_to_status_id_str
-                                                        logger.debug(f"Found reply to: {reply_to}")
-                                                        if reply_to == tweet_id:
-                                                            logger.debug(f"Found reply from user: {user.legacy.screen_name}")
-                                                            comments.append({
-                                                                'id': tweet.rest_id,
-                                                                'author': user.legacy.screen_name,
-                                                                'content': tweet.legacy.full_text if hasattr(tweet.legacy, 'full_text') else tweet.legacy.text,
-                                                                'created_at': tweet.legacy.created_at
-                                                            })
-                                        
-                                        logger.info(f"Successfully fetched thread for tweet {tweet_id} with {len(comments)} replies", extra={
-                                            'context': {
-                                                'tweet_id': tweet_id,
-                                                'reply_count': len(comments),
-                                                'component': 'twitter.thread'
-                                            }
-                                        })
-                                        return comments
-                                    else:
-                                        logger.error("No data in thread response")
-                                else:
-                                    logger.error("No user result in user_results")
-                            else:
-                                logger.error("No user_results in core")
-                        else:
-                            logger.error("No core in result")
-                    else:
-                        logger.error("No result in tweet_results")
-                else:
-                    logger.error("No tweet_results in data")
-            else:
-                logger.error("No data in response")
+            # Get replies to the tweet
+            replies = self.client.search_tweet(f"conversation_id:{tweet_id}")
             
-            return []
+            comments = []
+            for reply in replies:
+                comments.append({
+                    'id': reply.id,
+                    'author': reply.user.screen_name,
+                    'content': reply.text,
+                    'created_at': reply.created_at
+                })
+            
+            logger.info(f"Successfully fetched thread for tweet {tweet_id} with {len(comments)} replies", extra={
+                'context': {
+                    'tweet_id': tweet_id,
+                    'reply_count': len(comments),
+                    'component': 'twitter.thread'
+                }
+            })
+            return comments
             
         except Exception as e:
             logger.error(f"Error fetching tweet thread: {e}", exc_info=True)
@@ -303,7 +205,7 @@ class TwitterClient:
     async def like_tweet(self, tweet_id: str) -> None:
         """Like a tweet."""
         try:
-            self.api.get_post_api().post_favorite_tweet(tweet_id=tweet_id)
+            self.client.favorite_tweet(tweet_id)
             logger.info(f"Successfully liked tweet {tweet_id}", extra={
                 'context': {
                     'tweet_id': tweet_id,
@@ -323,10 +225,7 @@ class TwitterClient:
     async def reply_to_tweet(self, tweet_id: str, text: str) -> bool:
         """Reply to a tweet"""
         try:
-            self.api.get_post_api().post_create_tweet(
-                tweet_text=text,
-                in_reply_to_tweet_id=tweet_id
-            )
+            self.client.create_tweet(text, in_reply_to_status_id=tweet_id)
             logger.info(f"Successfully replied to tweet {tweet_id}", extra={
                 'context': {
                     'tweet_id': tweet_id,
@@ -352,39 +251,28 @@ class TwitterClient:
             if screen_name is None:
                 screen_name = Config.TWITTER_USERNAME
             
-            # Get user info to get the user ID
-            user_info = self.api.get_user_api().get_user_by_screen_name(screen_name=screen_name)
-            user_id = user_info.data.user.rest_id
+            # Get user info
+            user = self.client.get_user_by_screen_name(screen_name)
+            if not user:
+                logger.error(f"User {screen_name} not found")
+                return None
             
-            # Get user tweets with correct parameters
-            tweets_response = self.api.get_tweet_api().get_user_tweets(
-                user_id=user_id,
-                extra_param={"includeReplies": False, "includeRetweets": True}
-            )
+            # Get user tweets
+            tweets_response = self.client.get_user_tweets(user.id)
             
-            logger.debug(f"Tweets response type: {type(tweets_response)}")
-            logger.debug(f"Tweets response raw type: {type(tweets_response.raw)}")
-            logger.debug(f"Tweets response raw dir: {dir(tweets_response.raw)}")
-            logger.debug(f"Tweets response raw: {tweets_response.raw}")
-            
-            # Extract relevant data from tweets response
             tweets = []
-            for tweet_data in tweets_response.data:
-                if hasattr(tweet_data, 'result'):
-                    tweet_result = tweet_data.result
-                    user_result = tweet_result.core.user_results.result
-                    
-                    tweets.append({
-                        'content': tweet_result.legacy.full_text if hasattr(tweet_result.legacy, 'full_text') else tweet_result.legacy.text,
-                        'created_at': tweet_result.legacy.created_at,
-                        'author': user_result.legacy.screen_name,
-                        'engagement_metrics': {
-                            'likes': tweet_result.legacy.favorite_count,
-                            'retweets': tweet_result.legacy.retweet_count,
-                            'replies': tweet_result.legacy.reply_count,
-                            'views': tweet_result.views.count if hasattr(tweet_result, 'views') else 0
-                        }
-                    })
+            for tweet in tweets_response:
+                tweets.append({
+                    'content': tweet.text,
+                    'created_at': tweet.created_at,
+                    'author': tweet.user.screen_name,
+                    'engagement_metrics': {
+                        'likes': tweet.favorite_count,
+                        'retweets': tweet.retweet_count,
+                        'replies': tweet.reply_count,
+                        'views': getattr(tweet, 'view_count', 0)
+                    }
+                })
             
             logger.info(f"Successfully fetched tweets for user {screen_name}", extra={
                 'context': {
@@ -402,93 +290,6 @@ class TwitterClient:
             })
             raise
 
-    def _load_existing_cookies(self, cookie_path: Path) -> Dict:
-        """Load existing cookies from file"""
-        logger.debug("Loading existing cookies", extra={
-            'context': {
-                'cookie_path': str(cookie_path),
-                'component': 'twitter.auth'
-            }
-        })
-        with open(cookie_path, "r") as f:
-            cookies_dict = json.load(f)
-            return {k["name"]: k["value"] for k in cookies_dict} if isinstance(cookies_dict, list) else cookies_dict
-            
-    @retry_on_failure(max_retries=3, delay=2)
-    def _create_new_cookies(self, cookie_path: Path) -> Dict:
-        """Create and save new cookies with retry mechanism"""
-        logger.debug("Creating new cookies", extra={
-            'context': {
-                'cookie_path': str(cookie_path),
-                'component': 'twitter.auth'
-            }
-        })
-        if not Config.TWITTER_USERNAME or not Config.TWITTER_PASSWORD:
-            raise ValueError("Twitter credentials not found in config")
-            
-        try:
-            auth_handler = CookieSessionUserHandler(
-                screen_name=Config.TWITTER_USERNAME,
-                password=Config.TWITTER_PASSWORD
-            )
-            logger.debug("Created auth handler, attempting to get cookies", extra={
-                'context': {
-                    'username': Config.TWITTER_USERNAME,
-                    'component': 'twitter.auth'
-                }
-            })
-            cookies_dict = auth_handler.get_cookies().get_dict()
-            
-            if not cookies_dict:
-                raise ValueError("Failed to obtain cookies from auth handler")
-                
-            logger.debug("Successfully obtained cookies", extra={
-                'context': {
-                    'cookie_path': str(cookie_path),
-                    'component': 'twitter.auth'
-                }
-            })
-            
-            with open(cookie_path, "w") as f:
-                json.dump(cookies_dict, f, ensure_ascii=False, indent=4)
-            logger.info("Successfully saved new cookies to file", extra={
-                'context': {
-                    'cookie_path': str(cookie_path),
-                    'component': 'twitter.auth'
-                }
-            })
-            return cookies_dict
-            
-        except Exception as e:
-            logger.error(f"Failed to create new cookies: {e}", exc_info=True, extra={
-                'context': {
-                    'error': str(e),
-                    'component': 'twitter.auth'
-                }
-            })
-            raise
-        
-    def _validate_cookies(self, cookies_dict: Dict) -> bool:
-        """Validate cookie structure and contents"""
-        try:
-            required_keys = ['auth_token', 'ct0']
-            missing = [key for key in required_keys if key not in cookies_dict]
-            
-            if missing:
-                logger.error(f"Invalid cookie structure. Missing keys: {', '.join(missing)}")
-                return False
-                
-            # Check if cookies are not empty
-            for key in required_keys:
-                if not cookies_dict[key]:
-                    logger.error(f"Empty value for required cookie: {key}")
-                    return False
-                    
-            return True
-        except Exception as e:
-            logger.error(f"Error validating cookies: {str(e)}")
-            return False
-    
     @retry_on_failure()
     async def post_content(self, content: str, use_rag: bool = False, **kwargs) -> bool:
         """Post content to Twitter with optional RAG support"""
@@ -519,8 +320,8 @@ class TwitterClient:
                     logger.error("Failed to generate content")
                     return False
 
-            # Create tweet with correct method and parameters
-            self.api.get_post_api().post_create_tweet(tweet_text=content)
+            # Create tweet
+            self.client.create_tweet(content)
             logger.info("Successfully posted content to Twitter", extra={
                 'context': {
                     'content': content,
@@ -541,12 +342,11 @@ class TwitterClient:
     async def post_tweet(self, content: str) -> Optional[Dict[str, Any]]:
         """Post a new tweet"""
         try:
-            tweet = self.api.get_post_api().post_create_tweet(tweet_text=content)
-            if tweet and hasattr(tweet, 'data') and hasattr(tweet.data, 'tweet_results'):
-                tweet_data = tweet.data.tweet_results.result
+            tweet = self.client.create_tweet(content)
+            if tweet:
                 return {
-                    'id': tweet_data.rest_id,
-                    'text': tweet_data.legacy.full_text
+                    'id': tweet.id,
+                    'text': tweet.text
                 }
             return None
         except Exception as e:
@@ -557,18 +357,14 @@ class TwitterClient:
     async def get_tweet_metrics(self, tweet_id: str) -> Optional[Dict[str, int]]:
         """Get engagement metrics for a tweet"""
         try:
-            tweet = self.api.get_tweet_api().get_tweet_detail(focal_tweet_id=tweet_id)
-            if tweet and hasattr(tweet, 'data'):
-                # Extract metrics from the tweet data
-                tweet_data = tweet.data
-                if hasattr(tweet_data, 'tweet_results'):
-                    result = tweet_data.tweet_results.result
-                    return {
-                        'likes': result.legacy.favorite_count,
-                        'replies': result.legacy.reply_count,
-                        'reposts': result.legacy.retweet_count,
-                        'views': result.views.count if hasattr(result, 'views') else 0
-                    }
+            tweet = self.client.get_tweet_by_id(tweet_id)
+            if tweet:
+                return {
+                    'likes': tweet.favorite_count,
+                    'replies': tweet.reply_count,
+                    'reposts': tweet.retweet_count,
+                    'views': getattr(tweet, 'view_count', 0)
+                }
             return None
         except Exception as e:
             logger.error(f"Error getting tweet metrics: {e}", exc_info=True)
